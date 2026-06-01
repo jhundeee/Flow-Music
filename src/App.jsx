@@ -1,0 +1,1040 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
+import { ChevronLeft, Play, Shuffle } from 'lucide-react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import PlaybackBar from './components/PlaybackBar';
+import NowPlaying from './components/NowPlaying';
+import { LibrarySection } from './components/Library';
+import ScanProgress from './components/ScanProgress';
+import FolderPicker from './components/FolderPicker';
+import TitleBar from './components/TitleBar';
+import Settings from './components/Settings';
+import Panorama from './components/Panorama';
+import { SECTION_ORDER, SECTION_ACCENTS } from './components/Panorama';
+import { useToast } from './components/Toast';
+import { useLibraryIndexes } from './hooks/useLibraryIndexes';
+import { normPath, isUnderFolder, filterSongsForFolders } from './utils/paths';
+import { normalizeSongs, songIdFromPath } from './utils/songId';
+import { usePlayback } from './hooks/usePlayback';
+
+const isTauri = typeof window !== 'undefined' && window.__TAURI_INTERNALS__;
+
+function dedupePaths(paths) {
+  const normalized = [];
+  const seen = new Set();
+  for (const p of paths) {
+    const key = normPath(p);
+    if (!seen.has(key)) {
+      normalized.push(p);
+      seen.add(key);
+    }
+  }
+  return normalized.filter((p) => {
+    const pNorm = normPath(p);
+    return !normalized.some((other) => {
+      if (p === other) return false;
+      const otherNorm = normPath(other);
+      return pNorm.startsWith(`${otherNorm}/`);
+    });
+  });
+}
+
+const STORAGE_KEY = 'splayer_library';
+const FOLDERS_KEY = 'splayer_folders';
+const VOLUME_KEY = 'splayer_volume';
+const SETTINGS_KEY = 'splayer_settings';
+const SESSION_KEY = 'splayer_session';
+const APP_THEME_COLOR = '#6c5ce7';
+
+const audioSrcCache = new Map();
+const AUDIO_CACHE_MAX = 100;
+
+function cacheEvictOne() {
+  if (audioSrcCache.size <= AUDIO_CACHE_MAX) return;
+  const first = audioSrcCache.keys().next().value;
+  const old = audioSrcCache.get(first);
+  if (old) URL.revokeObjectURL(old);
+  audioSrcCache.delete(first);
+}
+
+function cacheGet(key) {
+  if (!audioSrcCache.has(key)) return null;
+  const val = audioSrcCache.get(key);
+  audioSrcCache.delete(key);
+  audioSrcCache.set(key, val);
+  return val;
+}
+
+function cacheSet(key, val) {
+  audioSrcCache.set(key, val);
+  cacheEvictOne();
+}
+
+async function loadAudioFile(filePath) {
+  if (!filePath) return '';
+  try {
+    const cached = cacheGet(filePath);
+    if (cached) return cached;
+    const result = await invoke('read_audio_file', { path: filePath });
+    const raw = atob(result.data);
+    const len = raw.length;
+    const buf = new ArrayBuffer(len);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < len; i++) view[i] = raw.charCodeAt(i);
+    const blob = new Blob([buf], { type: result.mime });
+    const url = URL.createObjectURL(blob);
+    cacheSet(filePath, url);
+    return url;
+  } catch (err) {
+    console.error('loadAudioFile failed:', err);
+    return '';
+  }
+}
+
+function formatTime(sec) {
+  if (sec == null || isNaN(sec) || !isFinite(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(e) { return { hasError: true, error: e }; }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement('div', { style: { padding: 40, color: '#fff', fontFamily: 'monospace', background: '#050510', height: '100vh' } },
+        React.createElement('h1', { style: { color: '#ff4757' } }, 'Render Error'),
+        React.createElement('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 13, color: '#ff6b81' } }, this.state.error?.message || 'Unknown error'),
+        React.createElement('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 12 } }, this.state.error?.stack || '')
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function App() {
+  const audioRef = useRef(null);
+  const currentAudioUrlRef = useRef(null);
+  const playbackTokenRef = useRef(0);
+  const fadeRef = useRef(null);
+  const fadeAudioRef = useRef(null);
+  const autoCrossfadeStartedRef = useRef(false);
+  const seekingRef = useRef(false);
+  const pendingCrossfadeRef = useRef(false);
+  const crossfadeAdvancedRef = useRef(false);
+
+  const [songs, setSongs] = useState([]);
+  const [filter, setFilter] = useState('all');
+  const [drillFilter, setDrillFilter] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [folderPaths, setFolderPaths] = useState([]);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(80);
+  const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const albumColor = APP_THEME_COLOR;
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const { addToast, ToastContainer } = useToast();
+  const [scanState, setScanState] = useState({
+    visible: false, folder: '', total: 0, current: 0,
+    fileName: '', cancelled: false,
+  });
+  const cancelFolderRef = useRef('');
+  const scanResultRef = useRef('');
+  const [lyricsLines, setLyricsLines] = useState([]);
+  const [lyricsSource, setLyricsSource] = useState(null);
+  const [lyricsAvailableSources, setLyricsAvailableSources] = useState([]);
+  const [lyricsOffset, setLyricsOffset] = useState(0);
+
+  const {
+    currentTrack,
+    shuffle,
+    repeat,
+    repeatRef: pbRepeatRef,
+    playTrackNow,
+    removeFromQueue,
+    clearQueue,
+    moveInQueue,
+    skipToNext,
+    skipToPrevious,
+    jumpToTrack,
+    hasUpcomingSong,
+    toggleShuffle,
+    toggleRepeat,
+    getCombinedQueue,
+    addToQueue,
+    playNext,
+    getSessionSnapshot,
+    restoreSession,
+  } = usePlayback();
+
+  const repeatRef = pbRepeatRef;
+  const nextSongRef = useRef(null);
+  const restoreTimeRef = useRef(0);
+
+  const songIndexById = useMemo(() => {
+    const map = new Map();
+    for (let i = 0; i < songs.length; i++) {
+      map.set(songs[i].id, i);
+    }
+    return map;
+  }, [songs]);
+
+  const getCurrentViewSongs = useCallback(() => {
+    let viewSongs = songs;
+    if (drillFilter) {
+      if (drillFilter.key === 'folder') {
+        viewSongs = viewSongs.filter(s => s.folder === drillFilter.value);
+      } else {
+        viewSongs = viewSongs.filter(s => s[drillFilter.key] === drillFilter.value);
+      }
+    } else if (filter === 'favorites') {
+      viewSongs = viewSongs.filter(s => s.isFavorite);
+    }
+    return viewSongs;
+  }, [songs, filter, drillFilter]);
+
+  const updateSliderFill = useCallback((slider) => {
+    if (!slider) return;
+    const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+    slider.style.setProperty('--progress', pct + '%');
+  }, []);
+
+  const loadVolume = useCallback(() => {
+    try {
+      const saved = localStorage.getItem(VOLUME_KEY);
+      if (saved !== null) {
+        let vol = parseFloat(saved);
+        if (vol > 100) vol = vol / 100;
+        vol = Math.max(0, Math.min(100, vol));
+        audioRef.current.volume = vol / 100;
+        setVolume(vol);
+      }
+    } catch {}
+  }, [audioRef]);
+
+  const saveVolume = useCallback((val) => {
+    try { localStorage.setItem(VOLUME_KEY, String(val)); } catch {}
+  }, []);
+
+  const defaultSettings = { crossfade: false, crossfadeDuration: 3 };
+
+  const [settings, setSettings] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+      if (saved && typeof saved.crossfade === 'boolean') return saved;
+    } catch {}
+    return defaultSettings;
+  });
+
+  const saveSettings = useCallback((next) => {
+    setSettings(next);
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
+  const [showSettings, setShowSettings] = useState(false);
+
+  const handleVolumeChange = useCallback((e) => {
+    const val = parseFloat(e.target.value);
+    audioRef.current.volume = val / 100;
+    setVolume(val);
+    saveVolume(val);
+  }, [audioRef, saveVolume]);
+
+  const loadLibrary = useCallback(async () => {
+    let folders = [];
+    let saved = [];
+    try { folders = JSON.parse(localStorage.getItem(FOLDERS_KEY) || '[]'); } catch {}
+    try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch {}
+    if (!Array.isArray(folders)) folders = [];
+    if (!Array.isArray(saved)) saved = [];
+    // Migrate old snake_case keys from previous Rust serialization
+    const snakeToCamel = (obj) => {
+      const map = { file_path: 'filePath', relative_path: 'relativePath', album_artist: 'albumArtist', track_no: 'trackNo', is_favorite: 'isFavorite', lyrics_source: 'lyricsSource', lyrics_unsynced: 'lyricsUnsynced', lyrics_lrc: 'lyricsLrc', lyrics_lrc_meta: 'lyricsLrcMeta', file_name: 'fileName' };
+      for (const [snake, camel] of Object.entries(map)) {
+        if (snake in obj && !(camel in obj)) { obj[camel] = obj[snake]; delete obj[snake]; }
+      }
+      return obj;
+    };
+    saved = saved.map(snakeToCamel);
+    // Discard any folder paths or file paths that look like URLs (from old sessions)
+    const isRealPath = (p) => p && !p.startsWith('http://') && !p.startsWith('https://') && !p.includes('localhost');
+    folders = folders.filter(isRealPath);
+    saved = saved.filter((s) => isRealPath(s.filePath));
+    folders = dedupePaths(folders);
+    let prunedSongs = normalizeSongs(filterSongsForFolders(saved, folders));
+    const invalidFolders = new Set(['', 'unknown', 'unknown album', 'unknown artist', 'localhost', 'localhost:5173', 'localhost5173']);
+    prunedSongs = prunedSongs.map((s) => {
+      const folderStr = s.folder ? s.folder.trim().toLowerCase() : '';
+      if ((folderStr && !invalidFolders.has(folderStr)) || !s.filePath) return s;
+      for (const fp of folders) {
+        const normFile = s.filePath.replace(/\\/g, '/').toLowerCase();
+        const normFolder = fp.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
+        if (normFile.startsWith(normFolder + '/')) {
+          const rel = normFile.slice(normFolder.length + 1);
+          const parts = rel.split('/');
+          const dir = parts.length > 1 ? parts[0] : normFolder.split('/').pop() || 'Unknown';
+          return { ...s, folder: dir };
+        }
+      }
+      const normal = s.filePath.replace(/\\/g, '/');
+      const parts = normal.split('/');
+      if (parts.length >= 2) {
+        const candidate = parts[parts.length - 2];
+        if (!candidate.includes(':')) return { ...s, folder: candidate };
+      }
+      return s;
+    });
+    const activeFolders = folders.filter((fp) => (
+      prunedSongs.some((s) => s.filePath && isUnderFolder(s.filePath, fp))
+    ));
+    setFolderPaths(activeFolders);
+    setSongs(prunedSongs);
+    if (folders.length > 0) {
+      const needsSave = prunedSongs.length !== saved.length
+        || saved.some((s) => {
+          const nextId = songIdFromPath(s.filePath) || s.id;
+          return s.id !== nextId;
+        });
+      if (needsSave) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prunedSongs)); } catch {}
+      }
+      if (activeFolders.length !== folders.length) {
+        try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(activeFolders)); } catch {}
+      }
+    }
+    loadedRef.current = true;
+  }, []);
+
+  const loadedRef = useRef(false);
+
+  const saveLibrary = useCallback((updatedSongs, updatedFolders) => {
+    if (updatedSongs !== undefined) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSongs)); } catch {}
+    }
+    if (updatedFolders !== undefined) {
+      try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(updatedFolders)); } catch {}
+    }
+  }, []);
+  const folderPathsRef = useRef(folderPaths);
+  const songsRef = useRef(songs);
+  const saveTimerRef = useRef(null);
+  folderPathsRef.current = folderPaths;
+  songsRef.current = songs;
+
+  useEffect(() => {
+    if (!loadedRef.current && songs.length === 0) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(songs)); } catch {}
+    }, 500);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [songs]);
+
+  const handleScanFolder = useCallback(async (folderPath, recursive) => {
+    setShowFolderPicker(false);
+    cancelFolderRef.current = folderPath;
+    scanResultRef.current = '';
+    setScanState({ visible: true, folder: folderPath, total: 0, current: 0, fileName: '', cancelled: false });
+    try {
+      const scanned = await invoke('scan_folder', { folderPath, recursive });
+      const result = scanResultRef.current;
+      const folderName = folderPath.split(/[\\/]/).pop() || folderPath;
+      if (result === 'error') {
+        addToast(`Failed to scan "${folderName}". Check folder permissions.`, 'error');
+        scanResultRef.current = '';
+        setScanState((prev) => ({ ...prev, visible: false }));
+        return;
+      }
+      if (result === 'no-audio') {
+        addToast(`No audio files found in "${folderName}".`, 'info');
+        scanResultRef.current = '';
+        setScanState((prev) => ({ ...prev, visible: false }));
+        return;
+      }
+      const prevFolders = dedupePaths(folderPathsRef.current);
+      const prevSongs = songsRef.current;
+      const existingIds = new Set(prevSongs.map((s) => s.id));
+      const newSongs = scanned.filter((s) => !existingIds.has(s.id));
+      const fp = normPath(folderPath);
+      if (newSongs.length > 0) {
+        const newFolders = dedupePaths([...prevFolders, folderPath]);
+        const updated = [...prevSongs, ...newSongs];
+        setFolderPaths(newFolders);
+        setSongs(updated);
+        saveLibrary(updated, newFolders);
+        addToast(`${newSongs.length} song${newSongs.length !== 1 ? 's' : ''} added from ${folderName}`, 'success');
+      } else {
+        const alreadyExists = prevFolders.some((p) => normPath(p) === fp);
+        if (!alreadyExists) {
+          addToast('All songs in this folder are already in your library.', 'info');
+          const newFolders = dedupePaths([...prevFolders, folderPath]);
+          setFolderPaths(newFolders);
+          saveLibrary(prevSongs, newFolders);
+        } else {
+          addToast('This folder is already in your library.', 'info');
+        }
+      }
+    } catch (err) {
+      addToast(`Failed to scan folder: ${err.message}`, 'error');
+    }
+    scanResultRef.current = '';
+    setScanState((prev) => ({ ...prev, visible: false }));
+  }, [addToast, saveLibrary]);
+
+  const handleScanFiles = useCallback(async (files) => {
+    if (!files || files.length === 0) return;
+    try {
+      const scanned = await invoke('scan_files', { files });
+      const existingIds = new Set(songs.map((s) => s.id));
+      const newSongs = scanned.filter((s) => !existingIds.has(s.id));
+      if (newSongs.length > 0) {
+        const updated = [...songs, ...newSongs];
+        setSongs(updated);
+        saveLibrary(updated);
+        addToast(`${newSongs.length} file${newSongs.length !== 1 ? 's' : ''} added to library.`, 'success');
+      } else {
+        addToast('Selected files are already in your library.', 'info');
+      }
+    } catch (err) {
+      addToast(`Failed to scan files: ${err.message}`, 'error');
+    }
+  }, [songs, addToast, saveLibrary]);
+
+  const selectFolder = useCallback(() => {
+    (async () => {
+      try {
+        const selected = await open({ directory: true, multiple: false, title: 'Select Music Folder' });
+        if (selected) handleScanFolder(selected, true);
+      } catch {
+        addToast('Failed to open folder selector.', 'error');
+      }
+    })();
+  }, [handleScanFolder, addToast]);
+
+  const removeFolderByName = useCallback((folderName) => {
+    if (!folderName) return;
+    const removedCurrent = currentTrack?.folder === folderName;
+    const updated = songs.filter((s) => s.folder !== folderName);
+    setSongs(updated);
+    songsRef.current = updated;
+    saveLibrary(updated);
+    if (removedCurrent) {
+      setIsPlaying(false);
+      audioRef.current?.pause();
+      audioRef.current?.removeAttribute('src');
+      playTrackNow(null, []);
+    }
+    addToast(`Removed "${folderName}" from library.`, 'success');
+  }, [songs, currentTrack, audioRef, saveLibrary, playTrackNow, addToast]);
+
+  const removeFolder = useCallback((folderPath) => {
+    if (!folderPath) return;
+    const newFolders = dedupePaths(folderPaths.filter((fp) => normPath(fp) !== normPath(folderPath)));
+    const removedCurrent = currentTrack?.filePath && isUnderFolder(currentTrack.filePath, folderPath);
+    const updated = songs.filter((s) => !isUnderFolder(s.filePath, folderPath));
+    setFolderPaths(newFolders);
+    setSongs(updated);
+    songsRef.current = updated;
+    folderPathsRef.current = newFolders;
+    saveLibrary(updated, newFolders);
+    if (removedCurrent) {
+      setIsPlaying(false);
+      audioRef.current?.pause();
+      audioRef.current?.removeAttribute('src');
+      playTrackNow(null, []);
+    }
+  }, [folderPaths, songs, currentTrack, saveLibrary, audioRef, playTrackNow]);
+
+  const loadLyricsForCurrent = useCallback((song) => {
+    let lines = [];
+    let source = null;
+    const available = [];
+    if (song.lyrics && song.lyrics.length > 0) available.push('embedded');
+    if (song.lyricsLRC && song.lyricsLRC.length > 0) available.push('lrc');
+    if (song.lyricsUnsynced) available.push('unsynced');
+    if (song.lyricsLRC && song.lyricsLRC.length > 0 && song.lyricsSource !== 'embedded') {
+      lines = song.lyricsLRC; source = 'lrc';
+    } else if (song.lyrics && song.lyrics.length > 0) {
+      lines = song.lyrics; source = 'embedded';
+    } else if (song.lyricsLRC && song.lyricsLRC.length > 0) {
+      lines = song.lyricsLRC; source = 'lrc';
+    } else if (song.lyricsUnsynced) {
+      lines = [{ text: song.lyricsUnsynced, time: -1 }]; source = 'unsynced';
+    }
+    setLyricsLines(lines); setLyricsSource(source);
+    setLyricsAvailableSources(available); setLyricsOffset(0);
+  }, []);
+
+  const loadTrack = useCallback(async (track) => {
+    if (!track || !track.filePath) return;
+    const token = playbackTokenRef.current + 1;
+    playbackTokenRef.current = token;
+    autoCrossfadeStartedRef.current = false;
+    crossfadeAdvancedRef.current = false;
+    const audio = audioRef.current;
+    const wasPlaying = isPlaying && !audio.paused;
+    const shouldCrossfade = pendingCrossfadeRef.current;
+    pendingCrossfadeRef.current = false;
+    const oldBlobUrl = currentAudioUrlRef.current;
+    const targetVolume = Math.max(0, Math.min(1, volume / 100));
+    if (fadeRef.current) {
+      cancelAnimationFrame(fadeRef.current.rafId);
+      fadeRef.current.audio.pause();
+      fadeRef.current.audio.removeAttribute('src');
+      fadeRef.current = null;
+    }
+    let fadeOutAudio = null;
+    const doFade = settings.crossfade && shouldCrossfade && wasPlaying && audio.src;
+    if (doFade) {
+      const oldUrl = oldBlobUrl || audio.src;
+      if (oldUrl) {
+        if (!fadeAudioRef.current) fadeAudioRef.current = new Audio();
+        fadeOutAudio = fadeAudioRef.current;
+        try {
+          fadeOutAudio.src = oldUrl;
+          fadeOutAudio.currentTime = audio.currentTime;
+          fadeOutAudio.volume = audio.volume;
+          fadeOutAudio.play().catch(() => {});
+        } catch (_) { fadeOutAudio = null; }
+      }
+    }
+    setCurrentTime(0);
+    if (!fadeOutAudio && oldBlobUrl) {
+      URL.revokeObjectURL(oldBlobUrl);
+      currentAudioUrlRef.current = null;
+    }
+    loadLyricsForCurrent(track);
+    if (fadeOutAudio) audio.volume = 0;
+    try {
+      if (token !== playbackTokenRef.current) return;
+      const src = await loadAudioFile(track.filePath);
+      if (!src) { addToast('Failed to load audio file.', 'error'); return; }
+      console.log('Audio src:', src);
+      audio.src = src;
+      currentAudioUrlRef.current = null;
+      await audio.play();
+      if (token !== playbackTokenRef.current) return;
+      if (restoreTimeRef.current > 0) {
+        audio.currentTime = restoreTimeRef.current;
+        restoreTimeRef.current = 0;
+      }
+      setIsPlaying(true);
+    } catch (_) {
+      if (token === playbackTokenRef.current) audio.volume = targetVolume;
+      return;
+    }
+    if (fadeOutAudio) {
+      const durationMs = Math.max(250, settings.crossfadeDuration * 1000);
+      const startAt = performance.now();
+      const oldStartVolume = fadeOutAudio.volume;
+      const runFade = (now) => {
+        if (token !== playbackTokenRef.current) { fadeOutAudio.pause(); fadeOutAudio.removeAttribute('src'); return; }
+        const progress = Math.min(1, (now - startAt) / durationMs);
+        fadeOutAudio.volume = Math.max(0, oldStartVolume * (1 - progress));
+        audio.volume = Math.min(targetVolume, targetVolume * progress);
+        if (progress < 1) { fadeRef.current = { audio: fadeOutAudio, rafId: requestAnimationFrame(runFade) }; return; }
+        fadeOutAudio.pause(); fadeOutAudio.removeAttribute('src'); audio.volume = targetVolume;
+        fadeRef.current = null;
+        if (oldBlobUrl && currentAudioUrlRef.current !== oldBlobUrl) URL.revokeObjectURL(oldBlobUrl);
+      };
+      fadeRef.current = { audio: fadeOutAudio, rafId: requestAnimationFrame(runFade) };
+    } else {
+      audio.volume = targetVolume;
+    }
+  }, [audioRef, loadLyricsForCurrent, settings.crossfade, settings.crossfadeDuration, volume, isPlaying]);
+
+  const togglePlay = useCallback(() => {
+    if (!songs.length) return;
+    if (!currentTrack) {
+      const first = songs.find(s => s.filePath);
+      if (first) {
+        const viewSongs = getCurrentViewSongs();
+        playTrackNow(first, viewSongs);
+        loadTrack(first);
+      }
+      return;
+    }
+    if (audioRef.current.paused) {
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      if (fadeRef.current) {
+        cancelAnimationFrame(fadeRef.current.rafId);
+        fadeRef.current.audio.pause();
+        fadeRef.current.audio.removeAttribute('src');
+        fadeRef.current = null;
+      }
+      audioRef.current.pause();
+      setIsPlaying(false);
+    }
+  }, [songs, currentTrack, audioRef, loadTrack, playTrackNow, getCurrentViewSongs]);
+
+  const advanceToNext = useCallback(() => {
+    if (!currentTrack) return;
+    const next = skipToNext();
+    if (next) {
+      pendingCrossfadeRef.current = true;
+      loadTrack(next);
+    } else {
+      setIsPlaying(false);
+    }
+  }, [currentTrack, skipToNext, loadTrack]);
+
+  const handleNext = useCallback(() => {
+    if (!currentTrack) return;
+    const next = skipToNext();
+    if (next) {
+      pendingCrossfadeRef.current = false;
+      loadTrack(next);
+    } else {
+      setIsPlaying(false);
+    }
+  }, [currentTrack, skipToNext, loadTrack]);
+
+  const handlePrevious = useCallback(() => {
+    if (!currentTrack) return;
+    if (audioRef.current.currentTime > 3) { audioRef.current.currentTime = 0; return; }
+    const prev = skipToPrevious();
+    if (prev) {
+      pendingCrossfadeRef.current = false;
+      loadTrack(prev);
+    }
+  }, [currentTrack, skipToPrevious, loadTrack, audioRef]);
+
+  nextSongRef.current = advanceToNext;
+
+  const hasUpcoming = useCallback(() => {
+    if (!currentTrack) return false;
+    return hasUpcomingSong();
+  }, [currentTrack, hasUpcomingSong]);
+
+  const combinedQueue = useMemo(() =>
+    getCombinedQueue().map((item) => ({
+      song: item.track,
+      type: item.type === 'current' ? 'current' : item.type,
+      sourceIndex: item.sourceIndex,
+    })),
+  [getCombinedQueue]);
+
+  const playFromQueue = useCallback((combinedIndex) => {
+    const items = getCombinedQueue();
+    const item = items[combinedIndex];
+    if (!item || item.type === 'current') return;
+    jumpToTrack(item.track);
+    pendingCrossfadeRef.current = false;
+    loadTrack(item.track);
+  }, [getCombinedQueue, jumpToTrack, loadTrack]);
+
+  const handlePlayFromLibrary = useCallback((masterIdx) => {
+    const track = songs[masterIdx];
+    if (!track) { console.warn('handlePlayFromLibrary: no track at index', masterIdx); return; }
+    console.log('Playing track:', track.name, 'filePath:', track.filePath);
+    const viewSongs = getCurrentViewSongs();
+    playTrackNow(track, viewSongs);
+    pendingCrossfadeRef.current = false;
+    loadTrack(track);
+  }, [songs, getCurrentViewSongs, playTrackNow, loadTrack]);
+
+  const handlePlayAll = useCallback(() => {
+    const viewSongs = getCurrentViewSongs();
+    if (viewSongs.length === 0) return;
+    const first = viewSongs[0];
+    const masterIdx = songIndexById.get(first.id);
+    if (masterIdx != null) handlePlayFromLibrary(masterIdx);
+  }, [getCurrentViewSongs, songIndexById, handlePlayFromLibrary]);
+
+  const handleShuffleAll = useCallback(() => {
+    const viewSongs = getCurrentViewSongs();
+    if (viewSongs.length === 0) return;
+    const shuffled = [...viewSongs];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    playTrackNow(shuffled[0], shuffled);
+    pendingCrossfadeRef.current = false;
+    loadTrack(shuffled[0]);
+  }, [getCurrentViewSongs, playTrackNow, loadTrack]);
+
+  const currentTimeRef = useRef(0);
+  const lastTimeUpdateRef = useRef(0);
+
+  const handleTimeUpdate = useCallback((e) => {
+    const a = e.currentTarget;
+    const t = Math.min(a.currentTime, a.duration || Infinity);
+    currentTimeRef.current = t;
+    const now = Date.now();
+    if (!seekingRef.current && now - lastTimeUpdateRef.current > 200) {
+      lastTimeUpdateRef.current = now;
+      setCurrentTime(t);
+    }
+    if (!settings.crossfade || autoCrossfadeStartedRef.current || a.paused) return;
+    if (!isFinite(a.duration) || a.duration <= 0) return;
+    const fadeSeconds = Math.max(0.25, settings.crossfadeDuration);
+    if (a.duration <= fadeSeconds + 0.5) return;
+    if (a.duration - t <= fadeSeconds && hasUpcoming()) {
+      autoCrossfadeStartedRef.current = true;
+      crossfadeAdvancedRef.current = true;
+      nextSongRef.current?.();
+    }
+  }, [settings.crossfade, settings.crossfadeDuration, hasUpcoming]);
+
+  const handleSeekBackward = useCallback(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const newTime = Math.max(0, (a.currentTime || 0) - 10);
+    if (!isFinite(newTime)) return;
+    seekingRef.current = true;
+    a.currentTime = newTime;
+    setCurrentTime(newTime);
+  }, []);
+
+  const handleSeekForward = useCallback(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const newTime = Math.min(a.duration || 0, (a.currentTime || 0) + 10);
+    if (!isFinite(newTime)) return;
+    seekingRef.current = true;
+    a.currentTime = newTime;
+    setCurrentTime(newTime);
+  }, []);
+
+  const handleLoadedMetadata = useCallback((e) => {
+    const a = e.currentTarget;
+    setDuration(a.duration || 0);
+    setCurrentTime(a.currentTime || 0);
+    autoCrossfadeStartedRef.current = false;
+  }, []);
+
+  const handleEnded = useCallback((e) => {
+    if (crossfadeAdvancedRef.current) { crossfadeAdvancedRef.current = false; return; }
+    const a = e.currentTarget;
+    autoCrossfadeStartedRef.current = false;
+    if (repeatRef.current === 'one') { a.currentTime = 0; a.play().catch(() => {}); return; }
+    pendingCrossfadeRef.current = true;
+    const next = skipToNext();
+    if (next) {
+      loadTrack(next);
+    } else {
+      setIsPlaying(false);
+    }
+  }, [repeatRef, skipToNext, loadTrack]);
+
+  const handlePlay = useCallback(() => setIsPlaying(true), []);
+
+  const handlePause = useCallback((e) => {
+    setIsPlaying(false);
+    setCurrentTime(Math.min(e.currentTarget.currentTime, duration || Infinity));
+  }, [duration]);
+
+  const handleError = useCallback((e) => {
+    const err = e.currentTarget?.error;
+    console.error('Audio playback error:', err?.message || err?.code || e.type);
+  }, []);
+
+  const handleSeeked = useCallback((e) => {
+    seekingRef.current = false;
+    setCurrentTime(e.currentTarget.currentTime);
+  }, []);
+
+  const handleOpenNowPlaying = useCallback(() => setShowNowPlaying(true), []);
+  const handleCloseNowPlaying = useCallback(() => {
+    setShowNowPlaying(false);
+    if (document.fullscreenElement) document.exitFullscreen();
+  }, []);
+
+const handleFavorite = useCallback(() => {
+  if (!currentTrack) return;
+  setSongs(prev => {
+    const idx = songIndexById.get(currentTrack.id);
+    if (idx == null || idx >= prev.length) return prev;
+    const updated = [...prev];
+    const wasFavorite = updated[idx].isFavorite;
+    updated[idx] = { ...updated[idx], isFavorite: !wasFavorite };
+    addToast(wasFavorite ? 'Removed from favorites' : 'Added to favorites', 'success');
+    return updated;
+  });
+}, [currentTrack, songIndexById, addToast]);
+
+const handleAddToQueue = useCallback((track) => {
+  addToQueue(track);
+  addToast(`Added "${track.name}" to queue`, 'success');
+}, [addToQueue, addToast]);
+
+const handlePlayNext = useCallback((track) => {
+  playNext(track);
+  addToast(`Added "${track.name}" to play next`, 'success');
+}, [playNext, addToast]);
+
+const handleSaveQueue = useCallback(() => {
+  // TODO: Implement actual playlist saving
+  addToast('Queue saved as playlist', 'success');
+}, [addToast]);
+
+const handleJumpToCurrent = useCallback(() => {
+  // Scroll queue to current track (which is at index 0 in combined queue)
+  // This would require accessing the queue DOM element and scrolling
+  // For now, we'll just show a toast
+  addToast('Jumped to current track', 'info');
+}, [addToast]);
+
+  useEffect(() => {
+    const flush = () => {
+      clearTimeout(saveTimerRef.current);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(songsRef.current)); } catch {}
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let unsub;
+    (async () => {
+      unsub = await listen('scan-progress', (event) => {
+        const data = event.payload;
+        setScanState((prev) => {
+          if (!prev.visible) return prev;
+          switch (data.type) {
+            case 'total': return { ...prev, folder: data.folder || prev.folder, total: data.count, current: 0, fileName: '' };
+            case 'progress': return { ...prev, current: data.current, total: data.total, fileName: data.fileName || '' };
+            case 'no-audio': scanResultRef.current = 'no-audio'; return { ...prev, visible: false };
+            case 'error': scanResultRef.current = 'error'; return { ...prev, visible: false, cancelled: true };
+            case 'complete':
+            case 'cancelled':
+              cancelFolderRef.current = '';
+              if (data.type === 'complete') scanResultRef.current = 'complete';
+              return { ...prev, cancelled: data.type === 'cancelled' };
+            default: return prev;
+          }
+        });
+      });
+    })();
+    return () => { if (unsub) unsub(); };
+  }, [addToast]);
+
+  useEffect(() => {
+    loadVolume();
+    loadLibrary();
+    const handleSliderInput = (e) => updateSliderFill(e.target);
+    document.querySelectorAll('input[type="range"]').forEach(slider => slider.addEventListener('input', handleSliderInput));
+    return () => {
+      document.querySelectorAll('input[type="range"]').forEach(slider => slider.removeEventListener('input', handleSliderInput));
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sessionRestoredRef = useRef(false);
+
+  useEffect(() => {
+    if (songs.length === 0 || sessionRestoredRef.current) return;
+    sessionRestoredRef.current = true;
+    let snapshot = null;
+    try { snapshot = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch {}
+    if (!snapshot) return;
+    const track = restoreSession(songs, snapshot);
+    if (snapshot.filter && snapshot.filter !== filter) setFilter(snapshot.filter);
+    if (snapshot.drillFilter) setDrillFilter(snapshot.drillFilter);
+    else if (!snapshot.drillFilter && snapshot.filter === 'all') setDrillFilter(null);
+    if (snapshot.isPlaying === true) setIsPlaying(true);
+    if (snapshot.currentTime > 0) restoreTimeRef.current = snapshot.currentTime;
+    if (track) loadTrack(track);
+  }, [songs, restoreSession, loadTrack, filter]);
+
+  const sessionSaveTimerRef = useRef(null);
+
+  useEffect(() => {
+    clearTimeout(sessionSaveTimerRef.current);
+    sessionSaveTimerRef.current = setTimeout(() => {
+      try {
+        const existing = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}');
+        existing.currentTime = currentTime;
+        existing.isPlaying = isPlaying;
+        existing.filter = filter;
+        existing.drillFilter = drillFilter;
+        localStorage.setItem(SESSION_KEY, JSON.stringify(existing));
+      } catch {}
+    }, 2000);
+    return () => clearTimeout(sessionSaveTimerRef.current);
+  }, [currentTime, isPlaying, filter, drillFilter]);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [togglePlay]);
+
+  const song = currentTrack && songIndexById.has(currentTrack.id)
+    ? songs[songIndexById.get(currentTrack.id)]
+    : null;
+
+  const { filteredSongs, artists, albums, folderCards } = useLibraryIndexes(songs, filter, drillFilter);
+
+  const handleFilterBy = useCallback((key, value) => {
+    setDrillFilter({ key, value });
+    setFilter(key === 'folder' ? 'folders' : key === 'artist' ? 'artists' : key === 'album' ? 'albums' : 'all');
+  }, []);
+
+  const handleDrillBack = useCallback(() => setDrillFilter(null), []);
+
+  return (
+    <AppErrorBoundary>
+    <div className="app-shell">
+      {!showNowPlaying && (
+      <>
+      <TitleBar />
+      <nav className="pivot-nav">
+        {SECTION_ORDER.map((f) => (
+          <button
+            key={f}
+            className={`pivot-item ${filter === f ? 'active' : ''}`}
+            style={filter === f ? { '--accent': SECTION_ACCENTS[f] } : undefined}
+            onClick={() => { setFilter(f); setDrillFilter(null); }}
+          >
+            {f === 'all' ? 'songs' : f}
+          </button>
+        ))}
+        <button className="pivot-add-btn" onClick={selectFolder}>+ add folder</button>
+      </nav>
+      <div className="app-main">
+{!showNowPlaying && !drillFilter && (
+  <Panorama activeSection={filter}>
+    <LibrarySection section="all" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={(masterIdx) => { setSongs(prev => { const u = [...prev]; u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite }; return u; }); }} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
+    <LibrarySection section="artists" artists={artists} onFilterBy={handleFilterBy} />
+    <LibrarySection section="albums" albums={albums} onFilterBy={handleFilterBy} />
+    <LibrarySection section="folders" folderCards={folderCards} folderPaths={folderPaths} onFilterBy={handleFilterBy} onRemoveFolder={removeFolder} onRemoveFolderByName={removeFolderByName} />
+    <LibrarySection section="favorites" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={(masterIdx) => { setSongs(prev => { const u = [...prev]; u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite }; return u; }); }} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
+  </Panorama>
+)}
+{!showNowPlaying && drillFilter && (
+  <div style={{ display: 'flex', flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+    <div className="panorama-section" style={{ width: '100vw', overflowY: 'auto' }}>
+      <div className="drill-header">
+        <button className="back-tile" onClick={handleDrillBack}><ChevronLeft size={20} /></button>
+        <h2>{drillFilter.value}</h2>
+      </div>
+      <LibrarySection
+        section="all"
+        filteredSongs={filteredSongs}
+        artists={artists}
+        albums={albums}
+        folderCards={folderCards}
+        folderPaths={folderPaths}
+        onPlaySong={handlePlayFromLibrary}
+        currentTrack={song}
+        songIndexById={songIndexById}
+        onToggleFavorite={(masterIdx) => { setSongs(prev => { const u = [...prev]; u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite }; return u; }); }}
+        onFilterBy={handleFilterBy}
+        onRemoveFolder={removeFolder}
+        onPlayNext={handlePlayNext}
+        onAddToQueue={handleAddToQueue}
+      />
+    </div>
+  </div>
+)}
+      </div>
+      <div className="fab-actions">
+        <button className="fab-btn play-all" onClick={handlePlayAll} title="Play All">
+          <Play size={18} fill="currentColor" />
+        </button>
+        <button className="fab-btn shuffle-all" onClick={handleShuffleAll} title="Shuffle">
+          <Shuffle size={18} />
+        </button>
+      </div>
+      </>
+      )}
+{showNowPlaying && (
+  <div className="np-overlay">
+    <NowPlaying
+      currentTrack={song}
+      onClose={handleCloseNowPlaying}
+      queue={combinedQueue}
+      queueIndex={0}
+      isPlaying={isPlaying}
+      onQueuePlay={playFromQueue}
+      onQueueRemove={(qi) => {
+        const items = getCombinedQueue();
+        const item = items[qi];
+        if (item && item.type === 'manual') removeFromQueue(item.sourceIndex);
+      }}
+      onQueueMoveUp={(qi) => {
+        const items = getCombinedQueue();
+        const item = items[qi];
+        if (item && item.type === 'manual') moveInQueue(item.sourceIndex, item.sourceIndex - 1);
+      }}
+      onQueueMoveDown={(qi) => {
+        const items = getCombinedQueue();
+        const item = items[qi];
+        if (item && item.type === 'manual') moveInQueue(item.sourceIndex, item.sourceIndex + 1);
+      }}
+      onQueueDragReorder={(fromQi, toQi) => {
+        const items = getCombinedQueue();
+        const from = items[fromQi];
+        const to = items[toQi];
+        if (from?.type === 'manual' && to?.type === 'manual') {
+          moveInQueue(from.sourceIndex, to.sourceIndex);
+        }
+      }}
+      onQueueClear={clearQueue}
+      onSave={handleSaveQueue}
+      onJump={handleJumpToCurrent}
+    />
+  </div>
+)}
+      <PlaybackBar
+        syncTime={currentTime}
+        duration={duration}
+        volume={volume}
+        isPlaying={isPlaying}
+        albumColor={albumColor}
+        song={song}
+        onPlayPause={togglePlay}
+        onPrev={handlePrevious}
+        onNext={handleNext}
+        onSeekBackward={handleSeekBackward}
+        onSeekForward={handleSeekForward}
+        onVolumeChange={handleVolumeChange}
+        onShuffle={toggleShuffle}
+        onRepeat={toggleRepeat}
+        onFavorite={handleFavorite}
+        onOpenNowPlaying={handleOpenNowPlaying}
+        onOpenSettings={() => setShowSettings(true)}
+        shuffle={shuffle}
+        repeat={repeat}
+        showNowPlaying={showNowPlaying}
+      />
+      <Settings visible={showSettings} settings={settings} onChange={saveSettings} onClose={() => setShowSettings(false)} />
+      <FolderPicker visible={showFolderPicker} onScan={handleScanFolder} onScanFiles={handleScanFiles} onClose={() => setShowFolderPicker(false)} />
+      <ScanProgress
+        visible={scanState.visible}
+        folder={scanState.folder}
+        total={scanState.total}
+        current={scanState.current}
+        fileName={scanState.fileName}
+        cancelled={scanState.cancelled}
+        onCancel={() => {
+          cancelFolderRef.current = scanState.folder;
+          invoke('cancel_scan', { folderPath: scanState.folder });
+        }}
+      />
+      <audio
+        ref={audioRef}
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onEnded={handleEnded}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onError={handleError}
+        onSeeked={handleSeeked}
+      />
+      {ToastContainer}
+    </div>
+    </AppErrorBoundary>
+  );
+}
+
+export default App;

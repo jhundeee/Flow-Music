@@ -1,0 +1,30 @@
+{
+  "name": "splayer",
+  "version": "1.0.0",
+  "description": "Local music player for desktop",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "vite build",
+    "tauri": "tauri",
+    "tauri:dev": "vite build && tauri dev --no-dev-server",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@applemusic-like-lyrics/core": "^0.5.1",
+    "@applemusic-like-lyrics/react": "^0.5.1",
+    "@codesandbox/sdk": "^2.4.2",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "lucide-react": "^1.17.0",
+    "music-metadata": "^11.12.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.14"
+  }
+}

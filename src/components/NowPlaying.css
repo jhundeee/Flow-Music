@@ -1,0 +1,235 @@
+/* ─── Root ─── */
+.np-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  z-index: 500;
+  overflow: hidden;
+}
+
+.np {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  background: #0b0f1a;
+}
+
+/* ─── Background art ─── */
+.np-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.np-bg-art {
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(60px) brightness(0.25);
+  transform: scale(1.2);
+}
+
+/* ─── Top bar ─── */
+.np-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  flex-shrink: 0;
+}
+
+.np-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+  font-size: 1.1rem;
+}
+
+.np-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.np-btn:active {
+  transform: scale(0.92);
+}
+
+.np-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.np-minimize-btn {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+}
+
+.np-minimize-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.np-minimize-btn svg {
+  transition: transform 0.15s;
+}
+
+.np-minimize-btn:hover svg {
+  transform: translateY(1px);
+}
+
+.np-top-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.25);
+  font-weight: 600;
+  flex: 1;
+  text-align: center;
+}
+
+/* Window control buttons in top bar */
+.np-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.np-wctrl {
+  width: 32px;
+  height: 32px;
+}
+
+.np-wctrl:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.np-wclose:hover {
+  background: var(--accent-red, #e81123);
+  color: #fff;
+}
+
+.np-restore-icon {
+  position: relative;
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+}
+
+.np-restore-back,
+.np-restore-front {
+  position: absolute;
+  border: 1.5px solid currentColor;
+  width: 8px;
+  height: 8px;
+}
+
+.np-restore-back {
+  top: 2px;
+  left: 0;
+  opacity: 0.5;
+}
+
+.np-restore-front {
+  top: 0;
+  left: 2px;
+  background: var(--np-bg, #0b0f1a);
+}
+
+/* ─── Body: 50/50 split ─── */
+.np-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  gap: 0;
+}
+
+/* ─── Left: 50% ─── */
+.np-left {
+  width: 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px 0 24px 24px;
+}
+
+/* Album art */
+.np-art-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+}
+
+.np-art-blur {
+  position: absolute;
+  inset: -20%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(40px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.np-art {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--surface, #222);
+}
+
+.np-art-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ─── Right: 60% ─── */
+.np-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 24px 24px 24px 0;
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 900px) {
+  .np-body { flex-direction: column; padding: 0 16px 16px; gap: 24px; overflow-y: auto; }
+  .np-left { width: 100%; min-width: 0; max-width: 400px; margin: 0 auto; padding: 0; }
+  .np-art { max-width: 100%; }
+  .np-right { height: 40vh; min-height: 200px; padding: 0; }
+  .np-lyrics { mask-image: none; -webkit-mask-image: none; }
+  .np-bg-text { font-size: 30vw; }
+}

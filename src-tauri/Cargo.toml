@@ -1,0 +1,23 @@
+[package]
+name = "splayer"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "splayer_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+walkdir = "2"
+lofty = "0.22"
+regex = "1"
+env_logger = "0.11"

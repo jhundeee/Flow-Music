@@ -1,0 +1,288 @@
+.np-queue {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.np-queue-sticky {
+  flex-shrink: 0;
+  padding-top: 20px;
+}
+
+.np-queue-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 60px;
+}
+
+.queue-clear-hanging-btn {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 10;
+  background-color: #0d111c;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.queue-clear-hanging-btn:hover {
+  background-color: #e81123;
+  border-color: #e81123;
+}
+
+.np-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px 16px;
+  flex-shrink: 0;
+}
+
+.np-q-section-title {
+  padding: 8px 20px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.np-queue-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.np-q-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.np-q-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.np-queue-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.np-queue-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.np-queue-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  min-height: 200px;
+  color: rgba(255, 255, 255, 0.12);
+  font-size: 14px;
+}
+
+.np-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.np-queue-item--draggable {
+  cursor: grab;
+}
+
+.np-queue-item--draggable:active {
+  cursor: grabbing;
+  opacity: 0.5;
+}
+
+.np-q-grip {
+  display: flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+  transition: color 0.2s ease;
+}
+
+.np-queue-item--draggable:hover .np-q-grip {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.np-queue-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.np-queue-item--active {
+  background: rgba(0, 162, 237, 0.12);
+  border-left: 3px solid #00a2ed;
+  padding-left: 17px;
+}
+
+.np-queue-item--active .np-q-name {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.np-queue-item--active .np-q-artist {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.np-q-move {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.np-queue-item:hover .np-q-move {
+  opacity: 1;
+}
+
+.np-q-up,
+.np-q-down {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 16px;
+  transition: color 0.2s ease;
+}
+
+.np-q-up:hover,
+.np-q-down:hover {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.np-q-art {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  background: var(--surface, #222);
+  background-size: cover !important;
+  background-position: center !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.np-q-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.np-q-name {
+  font-size: 19px;
+  font-weight: 700;
+  color: #f0f0f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.np-q-artist {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.np-q-dur {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.25);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+}
+
+.np-q-remove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.1);
+  font-size: 14px;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  opacity: 0;
+}
+
+.np-queue-item:hover .np-q-remove {
+  opacity: 1;
+}
+
+.np-q-remove:hover {
+  color: #ff4757;
+  background: rgba(255, 71, 87, 0.1);
+}
+
+@media (max-width: 700px) {
+  .np-queue-header {
+    padding: 18px 16px 12px;
+  }
+
+  .np-queue-scroll {
+    padding: 0 12px 16px;
+  }
+
+  .np-queue-item {
+    gap: 10px;
+    padding: 12px 10px;
+  }
+
+  .np-q-art {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+  .np-q-name {
+    font-size: 14px;
+  }
+
+  .np-q-artist,
+  .np-q-dur {
+    font-size: 12px;
+  }
+}
