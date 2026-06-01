@@ -645,6 +645,14 @@ function App() {
     if (masterIdx != null) handlePlayFromLibrary(masterIdx);
   }, [getCurrentViewSongs, songIndexById, handlePlayFromLibrary]);
 
+  const handleToggleFavorite = useCallback((masterIdx) => {
+    setSongs(prev => {
+      const u = [...prev];
+      u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite };
+      return u;
+    });
+  }, []);
+
   const handleShuffleAll = useCallback(() => {
     const viewSongs = getCurrentViewSongs();
     if (viewSongs.length === 0) return;
@@ -666,7 +674,7 @@ function App() {
     const t = Math.min(a.currentTime, a.duration || Infinity);
     currentTimeRef.current = t;
     const now = Date.now();
-    if (!seekingRef.current && now - lastTimeUpdateRef.current > 200) {
+    if (!seekingRef.current && now - lastTimeUpdateRef.current > 500) {
       lastTimeUpdateRef.current = now;
       setCurrentTime(t);
     }
@@ -903,11 +911,11 @@ const handleJumpToCurrent = useCallback(() => {
       <div className="app-main">
 {!showNowPlaying && !drillFilter && (
   <Panorama activeSection={filter}>
-    <LibrarySection section="all" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={(masterIdx) => { setSongs(prev => { const u = [...prev]; u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite }; return u; }); }} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
+    <LibrarySection section="all" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={handleToggleFavorite} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
     <LibrarySection section="artists" artists={artists} onFilterBy={handleFilterBy} />
     <LibrarySection section="albums" albums={albums} onFilterBy={handleFilterBy} />
     <LibrarySection section="folders" folderCards={folderCards} folderPaths={folderPaths} onFilterBy={handleFilterBy} onRemoveFolder={removeFolder} onRemoveFolderByName={removeFolderByName} />
-    <LibrarySection section="favorites" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={(masterIdx) => { setSongs(prev => { const u = [...prev]; u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite }; return u; }); }} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
+    <LibrarySection section="favorites" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={handleToggleFavorite} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
   </Panorama>
 )}
 {!showNowPlaying && drillFilter && (
@@ -927,7 +935,7 @@ const handleJumpToCurrent = useCallback(() => {
         onPlaySong={handlePlayFromLibrary}
         currentTrack={song}
         songIndexById={songIndexById}
-        onToggleFavorite={(masterIdx) => { setSongs(prev => { const u = [...prev]; u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite }; return u; }); }}
+        onToggleFavorite={handleToggleFavorite}
         onFilterBy={handleFilterBy}
         onRemoveFolder={removeFolder}
         onPlayNext={handlePlayNext}

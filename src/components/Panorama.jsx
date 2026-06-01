@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, memo } from 'react';
 
 const SECTION_ORDER = ['all', 'artists', 'albums', 'folders', 'favorites'];
 
@@ -30,5 +30,5 @@ const Panorama = forwardRef(function Panorama(
   );
 });
 
-export default Panorama;
+export default memo(Panorama);
 export { SECTION_ORDER, SECTION_ACCENTS };

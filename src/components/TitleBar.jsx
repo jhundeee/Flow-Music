@@ -29,7 +29,7 @@ export default function TitleBar() {
 
   return (
     <div className="title-bar" data-tauri-drag-region>
-      <img className="tb-icon" src="/icon.svg" alt="" />
+      <img className="tb-icon" src="/icon.png" alt="" />
       <span className="tb-label">flow music</span>
       {isTauri && (
         <div className="tb-controls">

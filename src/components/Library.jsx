@@ -207,7 +207,7 @@ const Library = memo(function Library({
 });
 
 /* ─── Individual Panorama Section ─── */
-function LibrarySection({ section, filteredSongs, artists, albums, folderCards, folderPaths, onPlaySong, currentTrack, songIndexById, onToggleFavorite, onFilterBy, onRemoveFolderByName, onPlayNext, onAddToQueue }) {
+const LibrarySection = memo(function LibrarySection({ section, filteredSongs, artists, albums, folderCards, folderPaths, onPlaySong, currentTrack, songIndexById, onToggleFavorite, onFilterBy, onRemoveFolderByName, onPlayNext, onAddToQueue }) {
   switch (section) {
     case 'all':
       return (
@@ -244,7 +244,7 @@ function LibrarySection({ section, filteredSongs, artists, albums, folderCards, 
     default:
       return null;
   }
-}
+});
 
 export { LibrarySection, SongsSection };
 export default Library;

@@ -77,17 +77,16 @@ const QueueRow = memo(function QueueRow({
 });
 
 function Queue({ queue = [], queueIndex = -1, isPlaying = false, onPlay, onRemove, onMoveUp, onMoveDown, onClear, onSave, onJump, onDragReorder }) {
-  const { current, manualItems, autoItems, totalAutoUpcoming, cappedAuto } = useMemo(() => {
+  const { current, manualItems, autoItems } = useMemo(() => {
     const cur = queueIndex >= 0 ? queue[queueIndex] : null;
     const manual = [];
     const auto = [];
-    const CAP = 100;
     for (let i = 0; i < queue.length; i++) {
       if (i === queueIndex) continue;
       const entry = queue[i];
       if (entry.type === 'manual') {
         manual.push({ entry, qi: i });
-      } else if (auto.length < CAP) {
+      } else {
         auto.push({ entry, qi: i });
       }
     }
@@ -95,8 +94,6 @@ function Queue({ queue = [], queueIndex = -1, isPlaying = false, onPlay, onRemov
       current: cur,
       manualItems: manual,
       autoItems: auto,
-      totalAutoUpcoming: queue.length - (queueIndex >= 0 ? 1 : 0) - manual.length,
-      cappedAuto: auto.length >= CAP,
     };
   }, [queue, queueIndex]);
 
@@ -193,10 +190,9 @@ function Queue({ queue = [], queueIndex = -1, isPlaying = false, onPlay, onRemov
         )}
       </div>
       {autoItems.length > 0 && (
-        <div className="np-queue-scroll">
-          <div className="np-q-section-title">
-            Upcoming{cappedAuto ? ` (${autoItems.length} of ${totalAutoUpcoming})` : ''}
-          </div>
+        <>
+          <div className="np-q-section-title">Upcoming</div>
+          <div className="np-queue-scroll">
           {autoItems.map(({ entry, qi }) => (
             <QueueRow
               key={`a-${qi}`}
@@ -212,6 +208,7 @@ function Queue({ queue = [], queueIndex = -1, isPlaying = false, onPlay, onRemov
             />
           ))}
         </div>
+        </>
       )}
       {onClear && (
         <button type="button" className="queue-clear-hanging-btn" onClick={onClear} title="Clear Queue">
