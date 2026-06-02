@@ -234,6 +234,9 @@ function App() {
   const nextSongRef = useRef(null);
   const restoreTimeRef = useRef(0);
 
+  const [settings, setSettings] = useState({ crossfade: false, crossfadeDuration: 3 });
+  const saveSettings = useCallback((val) => setSettings(val), []);
+
   const songIndexById = useMemo(() => {
     const map = new Map();
     for (let i = 0; i < songs.length; i++) {
