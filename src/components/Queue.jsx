@@ -77,24 +77,14 @@ const QueueRow = memo(function QueueRow({
 });
 
 function Queue({ queue = [], queueIndex = -1, isPlaying = false, onPlay, onRemove, onMoveUp, onMoveDown, onClear, onSave, onJump, onDragReorder }) {
-  const { current, manualItems, autoItems } = useMemo(() => {
-    const cur = queueIndex >= 0 ? queue[queueIndex] : null;
-    const manual = [];
-    const auto = [];
+  const { current, upcoming } = useMemo(() => {
+    const cur = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
+    const rest = [];
     for (let i = 0; i < queue.length; i++) {
       if (i === queueIndex) continue;
-      const entry = queue[i];
-      if (entry.type === 'manual') {
-        manual.push({ entry, qi: i });
-      } else {
-        auto.push({ entry, qi: i });
-      }
+      rest.push({ entry: queue[i], qi: i });
     }
-    return {
-      current: cur,
-      manualItems: manual,
-      autoItems: auto,
-    };
+    return { current: cur, upcoming: rest };
   }, [queue, queueIndex]);
 
   const dragRef = useRef(null);
@@ -164,51 +154,29 @@ function Queue({ queue = [], queueIndex = -1, isPlaying = false, onPlay, onRemov
             onMoveDown={onMoveDown}
           />
         )}
-        {manualItems.length > 0 && (
-          <>
-            <div className="np-q-section-title">Play Next</div>
-            {manualItems.map(({ entry, qi }) => (
-              <QueueRow
-                key={`m-${qi}`}
-                item={entry}
-                qi={qi}
-                queueIndex={queueIndex}
-                isPlaying={isPlaying}
-                queueLength={queue.length}
-                onPlay={onPlay}
-                onRemove={onRemove}
-                onMoveUp={onMoveUp}
-                onMoveDown={onMoveDown}
-                draggable={true}
-                onDragStart={(e) => handleDragStart(e, qi)}
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, qi)}
-                onDragEnd={handleDragEnd}
-              />
-            ))}
-          </>
-        )}
       </div>
-      {autoItems.length > 0 && (
-        <>
-          <div className="np-q-section-title">Upcoming</div>
-          <div className="np-queue-scroll">
-          {autoItems.map(({ entry, qi }) => (
-            <QueueRow
-              key={`a-${qi}`}
-              item={entry}
-              qi={qi}
-              queueIndex={queueIndex}
-              isPlaying={isPlaying}
-              queueLength={queue.length}
-              onPlay={onPlay}
-              onRemove={onRemove}
-              onMoveUp={onMoveUp}
-              onMoveDown={onMoveDown}
-            />
-          ))}
-        </div>
-        </>
+      {upcoming.length > 0 && (
+        <div className="np-queue-scroll">
+        {upcoming.map(({ entry, qi }) => (
+          <QueueRow
+            key={qi}
+            item={entry}
+            qi={qi}
+            queueIndex={queueIndex}
+            isPlaying={isPlaying}
+            queueLength={queue.length}
+            onPlay={onPlay}
+            onRemove={onRemove}
+            onMoveUp={onMoveUp}
+            onMoveDown={onMoveDown}
+            draggable={true}
+            onDragStart={(e) => handleDragStart(e, qi)}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, qi)}
+            onDragEnd={handleDragEnd}
+          />
+        ))}
+      </div>
       )}
       {onClear && (
         <button type="button" className="queue-clear-hanging-btn" onClick={onClear} title="Clear Queue">

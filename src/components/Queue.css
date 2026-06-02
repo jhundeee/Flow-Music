@@ -51,14 +51,6 @@
   flex-shrink: 0;
 }
 
-.np-q-section-title {
-  padding: 8px 20px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
 .np-queue-actions {
   display: flex;
   gap: 6px;
