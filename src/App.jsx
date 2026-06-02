@@ -523,6 +523,7 @@ function App() {
     const audio = audioRef.current;
     const targetVolume = Math.max(0, Math.min(1, volume / 100));
     setCurrentTime(0);
+    lastTimeUpdateRef.current = 0;
     loadLyricsForCurrent(track);
     try {
       if (token !== playbackTokenRef.current) return;
@@ -684,6 +685,9 @@ function App() {
     const a = e.currentTarget;
     setDuration(a.duration || 0);
     setCurrentTime(a.currentTime || 0);
+    lastTimeUpdateRef.current = 0;
+    autoCrossfadeStartedRef.current = false;
+    crossfadeAdvancedRef.current = false;
   }, []);
 
   const handleEnded = useCallback((e) => {
