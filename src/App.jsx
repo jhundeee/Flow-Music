@@ -192,6 +192,7 @@ function App() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(80);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [albumTheme, setAlbumTheme] = useState({ hex: APP_THEME_COLOR, rgb: APP_THEME_RGB });
   const albumColor = albumTheme.hex;
   const [showFolderPicker, setShowFolderPicker] = useState(false);
