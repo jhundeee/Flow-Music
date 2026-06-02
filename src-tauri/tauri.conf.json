@@ -2,10 +2,20 @@
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/refs/heads/dev/crates/tauri-utils/schema.json",
   "productName": "Flow Music",
   "version": "1.0.0",
-  "identifier": "com.splayer.app",
+  "identifier": "com.splayer.flowmusic",
   "build": {
     "frontendDist": "../dist",
     "beforeBuildCommand": "vite build"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
   },
   "app": {
     "windows": [

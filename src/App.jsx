@@ -256,6 +256,7 @@ function App() {
       for (const [snake, camel] of Object.entries(map)) {
         if (snake in obj && !(camel in obj)) { obj[camel] = obj[snake]; delete obj[snake]; }
       }
+      if ('lyricsLRC' in obj && !('lyricsLrc' in obj)) obj.lyricsLrc = obj.lyricsLRC;
       return obj;
     };
     saved = saved.map(snakeToCamel);
@@ -452,15 +453,16 @@ function App() {
     let lines = [];
     let source = null;
     const available = [];
+    const lrcLyrics = song.lyricsLrc || song.lyricsLRC || [];
     if (song.lyrics && song.lyrics.length > 0) available.push('embedded');
-    if (song.lyricsLRC && song.lyricsLRC.length > 0) available.push('lrc');
+    if (lrcLyrics.length > 0) available.push('lrc');
     if (song.lyricsUnsynced) available.push('unsynced');
-    if (song.lyricsLRC && song.lyricsLRC.length > 0 && song.lyricsSource !== 'embedded') {
-      lines = song.lyricsLRC; source = 'lrc';
+    if (lrcLyrics.length > 0 && song.lyricsSource !== 'embedded') {
+      lines = lrcLyrics; source = 'lrc';
     } else if (song.lyrics && song.lyrics.length > 0) {
       lines = song.lyrics; source = 'embedded';
-    } else if (song.lyricsLRC && song.lyricsLRC.length > 0) {
-      lines = song.lyricsLRC; source = 'lrc';
+    } else if (lrcLyrics.length > 0) {
+      lines = lrcLyrics; source = 'lrc';
     } else if (song.lyricsUnsynced) {
       lines = [{ text: song.lyricsUnsynced, time: -1 }]; source = 'unsynced';
     }
@@ -473,7 +475,6 @@ function App() {
     const token = playbackTokenRef.current + 1;
     playbackTokenRef.current = token;
     autoCrossfadeStartedRef.current = false;
-    crossfadeAdvancedRef.current = false;
     const audio = audioRef.current;
     const wasPlaying = isPlaying && !audio.paused;
     const shouldCrossfade = pendingCrossfadeRef.current;
@@ -487,7 +488,8 @@ function App() {
       fadeRef.current = null;
     }
     let fadeOutAudio = null;
-    const doFade = settings.crossfade && shouldCrossfade && wasPlaying && audio.src;
+    const doFade = settings.crossfade && shouldCrossfade && audio.src;
+    const doFadeIn = settings.crossfade && shouldCrossfade;
     if (doFade) {
       const oldUrl = oldBlobUrl || audio.src;
       if (oldUrl) {
@@ -526,7 +528,7 @@ function App() {
       if (token === playbackTokenRef.current) audio.volume = targetVolume;
       return;
     }
-    if (fadeOutAudio) {
+    if (doFade && fadeOutAudio) {
       const durationMs = Math.max(250, settings.crossfadeDuration * 1000);
       const startAt = performance.now();
       const oldStartVolume = fadeOutAudio.volume;
@@ -541,6 +543,20 @@ function App() {
         if (oldBlobUrl && currentAudioUrlRef.current !== oldBlobUrl) URL.revokeObjectURL(oldBlobUrl);
       };
       fadeRef.current = { audio: fadeOutAudio, rafId: requestAnimationFrame(runFade) };
+    } else if (doFadeIn) {
+      audio.volume = 0;
+      const durationMs = Math.max(250, settings.crossfadeDuration * 1000);
+      const startAt = performance.now();
+      const runFadeIn = (now) => {
+        if (token !== playbackTokenRef.current) return;
+        const progress = Math.min(1, (now - startAt) / durationMs);
+        audio.volume = Math.min(targetVolume, targetVolume * progress);
+        if (progress < 1) { fadeRef.current = { audio: null, rafId: requestAnimationFrame(runFadeIn) }; return; }
+        audio.volume = targetVolume;
+        fadeRef.current = null;
+        if (oldBlobUrl) URL.revokeObjectURL(oldBlobUrl);
+      };
+      fadeRef.current = { audio: null, rafId: requestAnimationFrame(runFadeIn) };
     } else {
       audio.volume = targetVolume;
     }
@@ -687,7 +703,7 @@ function App() {
       crossfadeAdvancedRef.current = true;
       nextSongRef.current?.();
     }
-  }, [settings.crossfade, settings.crossfadeDuration, hasUpcoming]);
+  }, [settings.crossfade, settings.crossfadeDuration, hasUpcoming, nextSongRef]);
 
   const handleSeekBackward = useCallback(() => {
     const a = audioRef.current;
@@ -714,6 +730,7 @@ function App() {
     setDuration(a.duration || 0);
     setCurrentTime(a.currentTime || 0);
     autoCrossfadeStartedRef.current = false;
+    crossfadeAdvancedRef.current = false;
   }, []);
 
   const handleEnded = useCallback((e) => {
@@ -807,7 +824,7 @@ const handleJumpToCurrent = useCallback(() => {
           if (!prev.visible) return prev;
           switch (data.type) {
             case 'total': return { ...prev, folder: data.folder || prev.folder, total: data.count, current: 0, fileName: '' };
-            case 'progress': return { ...prev, current: data.current, total: data.total, fileName: data.fileName || '' };
+            case 'progress': return { ...prev, current: data.current, total: data.total, fileName: data.fileName || data.file_name || '' };
             case 'no-audio': scanResultRef.current = 'no-audio'; return { ...prev, visible: false };
             case 'error': scanResultRef.current = 'error'; return { ...prev, visible: false, cancelled: true };
             case 'complete':
