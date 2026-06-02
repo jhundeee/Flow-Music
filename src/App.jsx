@@ -229,7 +229,6 @@ function App() {
     skipToNext,
     skipToPrevious,
     jumpToTrack,
-    hasUpcomingSong,
     toggleShuffle,
     toggleRepeat,
     getCombinedQueue,
@@ -241,7 +240,6 @@ function App() {
   } = usePlayback();
 
   const repeatRef = pbRepeatRef;
-  const nextSongRef = useRef(null);
   const restoreTimeRef = useRef(0);
 
   const [settings, setSettings] = useState({ crossfade: false, crossfadeDuration: 3 });
@@ -697,8 +695,6 @@ function App() {
     setDuration(a.duration || 0);
     setCurrentTime(a.currentTime || 0);
     lastTimeUpdateRef.current = 0;
-    autoCrossfadeStartedRef.current = false;
-    crossfadeAdvancedRef.current = false;
   }, []);
 
   const handleEnded = useCallback((e) => {
