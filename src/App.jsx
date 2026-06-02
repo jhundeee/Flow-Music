@@ -11,7 +11,7 @@ import FolderPicker from './components/FolderPicker';
 import TitleBar from './components/TitleBar';
 import Settings from './components/Settings';
 import Panorama from './components/Panorama';
-import { SECTION_ORDER, SECTION_ACCENTS } from './components/Panorama';
+import { SECTION_ORDER } from './components/Panorama';
 import { useToast } from './components/Toast';
 import { useLibraryIndexes } from './hooks/useLibraryIndexes';
 import { normPath, isUnderFolder, filterSongsForFolders } from './utils/paths';
@@ -43,9 +43,10 @@ function dedupePaths(paths) {
 const STORAGE_KEY = 'splayer_library';
 const FOLDERS_KEY = 'splayer_folders';
 const VOLUME_KEY = 'splayer_volume';
-const SETTINGS_KEY = 'splayer_settings';
 const SESSION_KEY = 'splayer_session';
 const APP_THEME_COLOR = '#6c5ce7';
+const APP_THEME_RGB = '108, 92, 231';
+const albumColorCache = new Map();
 
 const audioSrcCache = new Map();
 const AUDIO_CACHE_MAX = 100;
@@ -99,6 +100,68 @@ function formatTime(sec) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function rgbToHex(r, g, b) {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function extractDominantColor(src) {
+  if (!src) return Promise.resolve({ hex: APP_THEME_COLOR, rgb: APP_THEME_RGB });
+  if (albumColorCache.has(src)) return Promise.resolve(albumColorCache.get(src));
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const size = 64;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, size, size);
+        const { data } = ctx.getImageData(0, 0, size, size);
+        const buckets = new Map();
+
+        for (let i = 0; i < data.length; i += 16) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+          if (a < 180) continue;
+          const max = Math.max(r, g, b);
+          const min = Math.min(r, g, b);
+          const saturation = max - min;
+          const brightness = (r + g + b) / 3;
+          if (brightness < 28 || brightness > 235 || saturation < 24) continue;
+
+          const qr = Math.min(255, Math.round(r / 16) * 16);
+          const qg = Math.min(255, Math.round(g / 16) * 16);
+          const qb = Math.min(255, Math.round(b / 16) * 16);
+          const key = `${qr},${qg},${qb}`;
+          const current = buckets.get(key) || { r: qr, g: qg, b: qb, count: 0, score: 0 };
+          current.count += 1;
+          current.score += saturation * (brightness > 180 ? 0.7 : 1);
+          buckets.set(key, current);
+        }
+
+        const winner = [...buckets.values()].sort((a, b) => (b.count * b.score) - (a.count * a.score))[0];
+        if (!winner) throw new Error('No dominant color found');
+
+        const color = {
+          hex: rgbToHex(winner.r, winner.g, winner.b),
+          rgb: `${winner.r}, ${winner.g}, ${winner.b}`,
+        };
+        albumColorCache.set(src, color);
+        resolve(color);
+      } catch {
+        resolve({ hex: APP_THEME_COLOR, rgb: APP_THEME_RGB });
+      }
+    };
+    img.onerror = () => resolve({ hex: APP_THEME_COLOR, rgb: APP_THEME_RGB });
+    img.src = src;
+  });
+}
+
 class AppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(e) { return { hasError: true, error: e }; }
@@ -118,12 +181,7 @@ function App() {
   const audioRef = useRef(null);
   const currentAudioUrlRef = useRef(null);
   const playbackTokenRef = useRef(0);
-  const fadeRef = useRef(null);
-  const fadeAudioRef = useRef(null);
-  const autoCrossfadeStartedRef = useRef(false);
   const seekingRef = useRef(false);
-  const pendingCrossfadeRef = useRef(false);
-  const crossfadeAdvancedRef = useRef(false);
 
   const [songs, setSongs] = useState([]);
   const [filter, setFilter] = useState('all');
@@ -134,7 +192,8 @@ function App() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(80);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
-  const albumColor = APP_THEME_COLOR;
+  const [albumTheme, setAlbumTheme] = useState({ hex: APP_THEME_COLOR, rgb: APP_THEME_RGB });
+  const albumColor = albumTheme.hex;
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const { addToast, ToastContainer } = useToast();
   const [scanState, setScanState] = useState({
@@ -218,23 +277,6 @@ function App() {
   const saveVolume = useCallback((val) => {
     try { localStorage.setItem(VOLUME_KEY, String(val)); } catch {}
   }, []);
-
-  const defaultSettings = { crossfade: false, crossfadeDuration: 3 };
-
-  const [settings, setSettings] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
-      if (saved && typeof saved.crossfade === 'boolean') return saved;
-    } catch {}
-    return defaultSettings;
-  });
-
-  const saveSettings = useCallback((next) => {
-    setSettings(next);
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch {}
-  }, []);
-
-  const [showSettings, setShowSettings] = useState(false);
 
   const handleVolumeChange = useCallback((e) => {
     const val = parseFloat(e.target.value);
@@ -474,49 +516,17 @@ function App() {
     if (!track || !track.filePath) return;
     const token = playbackTokenRef.current + 1;
     playbackTokenRef.current = token;
-    autoCrossfadeStartedRef.current = false;
     const audio = audioRef.current;
-    const wasPlaying = isPlaying && !audio.paused;
-    const shouldCrossfade = pendingCrossfadeRef.current;
-    pendingCrossfadeRef.current = false;
-    const oldBlobUrl = currentAudioUrlRef.current;
     const targetVolume = Math.max(0, Math.min(1, volume / 100));
-    if (fadeRef.current) {
-      cancelAnimationFrame(fadeRef.current.rafId);
-      fadeRef.current.audio.pause();
-      fadeRef.current.audio.removeAttribute('src');
-      fadeRef.current = null;
-    }
-    let fadeOutAudio = null;
-    const doFade = settings.crossfade && shouldCrossfade && audio.src;
-    const doFadeIn = settings.crossfade && shouldCrossfade;
-    if (doFade) {
-      const oldUrl = oldBlobUrl || audio.src;
-      if (oldUrl) {
-        if (!fadeAudioRef.current) fadeAudioRef.current = new Audio();
-        fadeOutAudio = fadeAudioRef.current;
-        try {
-          fadeOutAudio.src = oldUrl;
-          fadeOutAudio.currentTime = audio.currentTime;
-          fadeOutAudio.volume = audio.volume;
-          fadeOutAudio.play().catch(() => {});
-        } catch (_) { fadeOutAudio = null; }
-      }
-    }
     setCurrentTime(0);
-    if (!fadeOutAudio && oldBlobUrl) {
-      URL.revokeObjectURL(oldBlobUrl);
-      currentAudioUrlRef.current = null;
-    }
     loadLyricsForCurrent(track);
-    if (fadeOutAudio) audio.volume = 0;
     try {
       if (token !== playbackTokenRef.current) return;
       const src = await loadAudioFile(track.filePath);
       if (!src) { addToast('Failed to load audio file.', 'error'); return; }
       console.log('Audio src:', src);
       audio.src = src;
-      currentAudioUrlRef.current = null;
+      currentAudioUrlRef.current = src;
       await audio.play();
       if (token !== playbackTokenRef.current) return;
       if (restoreTimeRef.current > 0) {
@@ -528,39 +538,8 @@ function App() {
       if (token === playbackTokenRef.current) audio.volume = targetVolume;
       return;
     }
-    if (doFade && fadeOutAudio) {
-      const durationMs = Math.max(250, settings.crossfadeDuration * 1000);
-      const startAt = performance.now();
-      const oldStartVolume = fadeOutAudio.volume;
-      const runFade = (now) => {
-        if (token !== playbackTokenRef.current) { fadeOutAudio.pause(); fadeOutAudio.removeAttribute('src'); return; }
-        const progress = Math.min(1, (now - startAt) / durationMs);
-        fadeOutAudio.volume = Math.max(0, oldStartVolume * (1 - progress));
-        audio.volume = Math.min(targetVolume, targetVolume * progress);
-        if (progress < 1) { fadeRef.current = { audio: fadeOutAudio, rafId: requestAnimationFrame(runFade) }; return; }
-        fadeOutAudio.pause(); fadeOutAudio.removeAttribute('src'); audio.volume = targetVolume;
-        fadeRef.current = null;
-        if (oldBlobUrl && currentAudioUrlRef.current !== oldBlobUrl) URL.revokeObjectURL(oldBlobUrl);
-      };
-      fadeRef.current = { audio: fadeOutAudio, rafId: requestAnimationFrame(runFade) };
-    } else if (doFadeIn) {
-      audio.volume = 0;
-      const durationMs = Math.max(250, settings.crossfadeDuration * 1000);
-      const startAt = performance.now();
-      const runFadeIn = (now) => {
-        if (token !== playbackTokenRef.current) return;
-        const progress = Math.min(1, (now - startAt) / durationMs);
-        audio.volume = Math.min(targetVolume, targetVolume * progress);
-        if (progress < 1) { fadeRef.current = { audio: null, rafId: requestAnimationFrame(runFadeIn) }; return; }
-        audio.volume = targetVolume;
-        fadeRef.current = null;
-        if (oldBlobUrl) URL.revokeObjectURL(oldBlobUrl);
-      };
-      fadeRef.current = { audio: null, rafId: requestAnimationFrame(runFadeIn) };
-    } else {
-      audio.volume = targetVolume;
-    }
-  }, [audioRef, loadLyricsForCurrent, settings.crossfade, settings.crossfadeDuration, volume, isPlaying]);
+    audio.volume = targetVolume;
+  }, [audioRef, loadLyricsForCurrent, volume]);
 
   const togglePlay = useCallback(() => {
     if (!songs.length) return;
@@ -576,12 +555,6 @@ function App() {
     if (audioRef.current.paused) {
       audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     } else {
-      if (fadeRef.current) {
-        cancelAnimationFrame(fadeRef.current.rafId);
-        fadeRef.current.audio.pause();
-        fadeRef.current.audio.removeAttribute('src');
-        fadeRef.current = null;
-      }
       audioRef.current.pause();
       setIsPlaying(false);
     }
@@ -591,7 +564,6 @@ function App() {
     if (!currentTrack) return;
     const next = skipToNext();
     if (next) {
-      pendingCrossfadeRef.current = true;
       loadTrack(next);
     } else {
       setIsPlaying(false);
@@ -602,7 +574,6 @@ function App() {
     if (!currentTrack) return;
     const next = skipToNext();
     if (next) {
-      pendingCrossfadeRef.current = false;
       loadTrack(next);
     } else {
       setIsPlaying(false);
@@ -614,17 +585,9 @@ function App() {
     if (audioRef.current.currentTime > 3) { audioRef.current.currentTime = 0; return; }
     const prev = skipToPrevious();
     if (prev) {
-      pendingCrossfadeRef.current = false;
       loadTrack(prev);
     }
   }, [currentTrack, skipToPrevious, loadTrack, audioRef]);
-
-  nextSongRef.current = advanceToNext;
-
-  const hasUpcoming = useCallback(() => {
-    if (!currentTrack) return false;
-    return hasUpcomingSong();
-  }, [currentTrack, hasUpcomingSong]);
 
   const combinedQueue = useMemo(() =>
     getCombinedQueue().map((item) => ({
@@ -639,7 +602,6 @@ function App() {
     const item = items[combinedIndex];
     if (!item || item.type === 'current') return;
     jumpToTrack(item.track);
-    pendingCrossfadeRef.current = false;
     loadTrack(item.track);
   }, [getCombinedQueue, jumpToTrack, loadTrack]);
 
@@ -649,7 +611,6 @@ function App() {
     console.log('Playing track:', track.name, 'filePath:', track.filePath);
     const viewSongs = getCurrentViewSongs();
     playTrackNow(track, viewSongs);
-    pendingCrossfadeRef.current = false;
     loadTrack(track);
   }, [songs, getCurrentViewSongs, playTrackNow, loadTrack]);
 
@@ -678,7 +639,6 @@ function App() {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     playTrackNow(shuffled[0], shuffled);
-    pendingCrossfadeRef.current = false;
     loadTrack(shuffled[0]);
   }, [getCurrentViewSongs, playTrackNow, loadTrack]);
 
@@ -694,16 +654,7 @@ function App() {
       lastTimeUpdateRef.current = now;
       setCurrentTime(t);
     }
-    if (!settings.crossfade || autoCrossfadeStartedRef.current || a.paused) return;
-    if (!isFinite(a.duration) || a.duration <= 0) return;
-    const fadeSeconds = Math.max(0.25, settings.crossfadeDuration);
-    if (a.duration <= fadeSeconds + 0.5) return;
-    if (a.duration - t <= fadeSeconds && hasUpcoming()) {
-      autoCrossfadeStartedRef.current = true;
-      crossfadeAdvancedRef.current = true;
-      nextSongRef.current?.();
-    }
-  }, [settings.crossfade, settings.crossfadeDuration, hasUpcoming, nextSongRef]);
+  }, []);
 
   const handleSeekBackward = useCallback(() => {
     const a = audioRef.current;
@@ -729,16 +680,11 @@ function App() {
     const a = e.currentTarget;
     setDuration(a.duration || 0);
     setCurrentTime(a.currentTime || 0);
-    autoCrossfadeStartedRef.current = false;
-    crossfadeAdvancedRef.current = false;
   }, []);
 
   const handleEnded = useCallback((e) => {
-    if (crossfadeAdvancedRef.current) { crossfadeAdvancedRef.current = false; return; }
     const a = e.currentTarget;
-    autoCrossfadeStartedRef.current = false;
     if (repeatRef.current === 'one') { a.currentTime = 0; a.play().catch(() => {}); return; }
-    pendingCrossfadeRef.current = true;
     const next = skipToNext();
     if (next) {
       loadTrack(next);
@@ -897,6 +843,14 @@ const handleJumpToCurrent = useCallback(() => {
     ? songs[songIndexById.get(currentTrack.id)]
     : null;
 
+  useEffect(() => {
+    let cancelled = false;
+    extractDominantColor(song?.cover).then((color) => {
+      if (!cancelled) setAlbumTheme(color);
+    });
+    return () => { cancelled = true; };
+  }, [song?.cover]);
+
   const { filteredSongs, artists, albums, folderCards } = useLibraryIndexes(songs, filter, drillFilter);
 
   const handleFilterBy = useCallback((key, value) => {
@@ -908,7 +862,10 @@ const handleJumpToCurrent = useCallback(() => {
 
   return (
     <AppErrorBoundary>
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      style={{ '--accent': albumTheme.hex, '--accent-rgb': albumTheme.rgb }}
+    >
       {!showNowPlaying && (
       <>
       <TitleBar />
@@ -917,7 +874,7 @@ const handleJumpToCurrent = useCallback(() => {
           <button
             key={f}
             className={`pivot-item ${filter === f ? 'active' : ''}`}
-            style={filter === f ? { '--accent': SECTION_ACCENTS[f] } : undefined}
+            style={filter === f ? { '--accent': albumColor } : undefined}
             onClick={() => { setFilter(f); setDrillFilter(null); }}
           >
             {f === 'all' ? 'songs' : f}

@@ -3,11 +3,11 @@ import React, { forwardRef, memo } from 'react';
 const SECTION_ORDER = ['all', 'artists', 'albums', 'folders', 'favorites'];
 
 const SECTION_ACCENTS = {
-  all: '#00a2ed',
-  artists: '#00a2ed',
-  albums: '#00a2ed',
-  folders: '#00a2ed',
-  favorites: '#00a2ed',
+  all: 'var(--accent)',
+  artists: 'var(--accent)',
+  albums: 'var(--accent)',
+  folders: 'var(--accent)',
+  favorites: 'var(--accent)',
 };
 
 const Panorama = forwardRef(function Panorama(

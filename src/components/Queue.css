@@ -138,8 +138,8 @@
 }
 
 .np-queue-item--active {
-  background: rgba(0, 162, 237, 0.12);
-  border-left: 3px solid #00a2ed;
+  background: rgba(var(--accent-rgb, 0, 162, 237), 0.12);
+  border-left: 3px solid var(--accent, #00a2ed);
   padding-left: 17px;
 }
 

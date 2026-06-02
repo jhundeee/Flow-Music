@@ -1,299 +1,353 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 
 const SESSION_KEY = 'splayer_session';
+const REPEAT_MODES = ['off', 'all', 'one'];
 
-function fisherYatesShuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+function asArray(tracks) {
+  if (!tracks) return [];
+  return Array.isArray(tracks) ? tracks.filter(Boolean) : [tracks].filter(Boolean);
 }
 
-export function usePlayback() {
-  const [playbackHistory, setPlaybackHistory] = useState([]);
-  const [currentTrack, setCurrentTrack] = useState(null);
-  const [userQueue, setUserQueue] = useState([]);
-  const [playbackContext, setPlaybackContext] = useState([]);
-  const [contextIndex, setContextIndex] = useState(-1);
-  const [originalContextOrder, setOriginalContextOrder] = useState([]);
-  const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState('off');
-  const [autoplayTracks, setAutoplayTracks] = useState([]);
+function sameTrack(a, b) {
+  if (!a || !b) return false;
+  return a === b || a.id === b.id || a.filePath === b.filePath;
+}
 
-  const repeatRef = useRef(repeat);
-  repeatRef.current = repeat;
+function findTrackIndex(tracks, track) {
+  if (!track) return -1;
+  return tracks.findIndex((candidate) => sameTrack(candidate, track));
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  const input = String(value || '');
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededRandom(seed) {
+  let value = seed || 1;
+  return () => {
+    value = Math.imul(value ^ (value >>> 15), 1 | value);
+    value ^= value + Math.imul(value ^ (value >>> 7), 61 | value);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function deterministicShuffle(tracks, seedSource) {
+  const shuffled = [...tracks];
+  const random = seededRandom(hashString(seedSource));
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function sourceQueueAfter(sourceTracks, currentTrack) {
+  if (!currentTrack || sourceTracks.length === 0) return [];
+  const idx = findTrackIndex(sourceTracks, currentTrack);
+  if (idx < 0) return [];
+  return sourceTracks.slice(idx + 1);
+}
+
+function refsFromTracks(tracks) {
+  return tracks.map((track) => (
+    track ? { id: track.id, filePath: track.filePath } : null
+  )).filter(Boolean);
+}
+
+function buildCombinedQueue(currentTrack, queue) {
+  const items = [];
+  if (currentTrack) {
+    items.push({ track: currentTrack, type: 'current', sourceIndex: -1 });
+  }
+  queue.forEach((track, index) => {
+    items.push({ track, type: 'manual', sourceIndex: index });
+  });
+  return items;
+}
+
+// QueueState contract:
+// currentTrack is stored separately, queue contains only upcoming tracks,
+// history is independent, and sourceTracks is read-only metadata for repeat-all.
+export function usePlayback() {
+  const [currentTrack, setCurrentTrack] = useState(null);
+  const [queue, setQueue] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [shuffleEnabled, setShuffleEnabled] = useState(false);
+  const [repeatMode, setRepeatMode] = useState('off');
+  const [sourceTracks, setSourceTracks] = useState([]);
+  const [playNextCount, setPlayNextCount] = useState(0);
+
+  const repeatRef = useRef(repeatMode);
+  repeatRef.current = repeatMode;
+
+  const stateRef = useRef(null);
+  stateRef.current = {
+    currentTrack,
+    queue,
+    history,
+    shuffleEnabled,
+    repeatMode,
+    sourceTracks,
+    playNextCount,
+  };
 
   const saveTimerRef = useRef(null);
-
-  const snapRef = useRef(null);
-  snapRef.current = { playbackHistory, userQueue, playbackContext, contextIndex, originalContextOrder, shuffle, repeat, autoplayTracks, currentTrack };
 
   useEffect(() => {
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      const s = snapRef.current;
-      const toRef = (t) => t ? { id: t.id, filePath: t.filePath } : null;
+      const state = stateRef.current;
       try {
         localStorage.setItem(SESSION_KEY, JSON.stringify({
-          version: 1,
-          history: s.playbackHistory.map(toRef),
-          userQueue: s.userQueue.map(toRef),
-          playbackContext: s.playbackContext.map(toRef),
-          contextIndex: s.contextIndex,
-          shuffle: s.shuffle,
-          repeat: s.repeat,
-          originalContextOrder: s.originalContextOrder.map(toRef),
-          autoplayTracks: s.autoplayTracks.map(toRef),
-          currentTrack: toRef(s.currentTrack),
+          version: 2,
+          currentTrack: state.currentTrack ? { id: state.currentTrack.id, filePath: state.currentTrack.filePath } : null,
+          queue: refsFromTracks(state.queue),
+          history: refsFromTracks(state.history),
+          shuffle: state.shuffleEnabled,
+          repeat: state.repeatMode,
+          sourceTracks: refsFromTracks(state.sourceTracks),
+          playNextCount: state.playNextCount,
+
+          // Kept for compatibility with older saved sessions.
+          userQueue: refsFromTracks(state.queue),
+          playbackContext: refsFromTracks(state.sourceTracks),
+          contextIndex: findTrackIndex(state.sourceTracks, state.currentTrack),
+          originalContextOrder: [],
+          autoplayTracks: [],
         }));
       } catch {}
     }, 1000);
     return () => clearTimeout(saveTimerRef.current);
-  }, [playbackHistory, userQueue, playbackContext, contextIndex, shuffle, repeat, originalContextOrder, autoplayTracks, currentTrack]);
+  }, [currentTrack, queue, history, shuffleEnabled, repeatMode, sourceTracks, playNextCount]);
 
-  const findIn = useCallback((arr, track) => {
-    let idx = arr.indexOf(track);
-    if (idx < 0 && track) {
-      idx = arr.findIndex(t => t.id === track.id || t.filePath === track.filePath);
-    }
-    return idx;
+  const playTrackNow = useCallback((track, contextArray = []) => {
+    const source = asArray(contextArray);
+    const sourceIndex = findTrackIndex(source, track);
+    const upcoming = sourceIndex >= 0 ? source.slice(sourceIndex + 1) : [];
+
+    setCurrentTrack(track || null);
+    setQueue(upcoming);
+    setHistory([]);
+    setSourceTracks(sourceIndex >= 0 ? source : asArray(track));
+    setPlayNextCount(0);
   }, []);
 
-  const upcomingCount =
-    userQueue.length +
-    Math.max(0, playbackContext.length - 1 - contextIndex) +
-    autoplayTracks.length;
-
-  const playTrackNow = useCallback((track, contextArray) => {
-    let idx = contextArray.indexOf(track);
-    if (idx < 0 && track) {
-      idx = contextArray.findIndex(t => t.id === track.id || t.filePath === track.filePath);
-    }
-    setPlaybackHistory([]);
-    setUserQueue([]);
-    setAutoplayTracks([]);
-    setPlaybackContext(contextArray);
-    setContextIndex(idx >= 0 ? idx : 0);
-    setCurrentTrack(track);
-    setOriginalContextOrder([]);
+  const addToQueue = useCallback((tracks) => {
+    const nextTracks = asArray(tracks);
+    if (nextTracks.length === 0) return;
+    setQueue((prev) => [...prev, ...nextTracks]);
   }, []);
 
-  const playNext = useCallback((track) => {
-    setUserQueue(prev => [track, ...prev]);
+  const playNext = useCallback((tracks) => {
+    const nextTracks = asArray(tracks);
+    if (nextTracks.length === 0) return;
+    setQueue((prev) => [...nextTracks, ...prev]);
+    setPlayNextCount((count) => count + nextTracks.length);
   }, []);
 
-  const addToQueue = useCallback((track) => {
-    setUserQueue(prev => [...prev, track]);
-  }, []);
+  const removeFromQueue = useCallback((indexOrTrack) => {
+    const state = stateRef.current;
+    const removeIndex = typeof indexOrTrack === 'number'
+      ? indexOrTrack
+      : findTrackIndex(state.queue, indexOrTrack);
+    if (removeIndex < 0 || removeIndex >= state.queue.length) return;
 
-  const removeFromQueue = useCallback((qi) => {
-    setUserQueue(prev => prev.filter((_, i) => i !== qi));
+    setQueue((prev) => {
+      if (removeIndex < 0 || removeIndex >= prev.length) return prev;
+      return prev.filter((_, index) => index !== removeIndex);
+    });
+    setPlayNextCount((count) => {
+      return removeIndex < count ? Math.max(0, count - 1) : count;
+    });
   }, []);
 
   const clearQueue = useCallback(() => {
-    setUserQueue([]);
+    setQueue([]);
+    setPlayNextCount(0);
   }, []);
 
   const moveInQueue = useCallback((from, to) => {
-    if (to < 0) return;
-    setUserQueue(prev => {
-      if (to >= prev.length) return prev;
+    setQueue((prev) => {
+      if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;
       const updated = [...prev];
       const [moved] = updated.splice(from, 1);
       updated.splice(to, 0, moved);
       return updated;
     });
+    setPlayNextCount((count) => {
+      if (from >= count && to >= count) return count;
+      if (from < count && to < count) return count;
+      if (from < count && to >= count) return Math.max(0, count - 1);
+      if (from >= count && to < count) return count + 1;
+      return count;
+    });
   }, []);
 
-  const resolveNextTrack = useCallback(() => {
-    if (userQueue.length > 0) {
-      const [first, ...rest] = userQueue;
-      setUserQueue(rest);
-      return first;
-    }
-
-    const nextIdx = contextIndex + 1;
-    if (nextIdx < playbackContext.length) {
-      setContextIndex(nextIdx);
-      return playbackContext[nextIdx];
-    }
-
-    if (repeatRef.current === 'all' && playbackContext.length > 0) {
-      setContextIndex(0);
-      return playbackContext[0];
-    }
-
-    if (autoplayTracks.length > 0) {
-      const [first, ...rest] = autoplayTracks;
-      setAutoplayTracks(rest);
-      return first;
-    }
-
-    return null;
-  }, [userQueue, contextIndex, playbackContext, autoplayTracks]);
+  const resolveRepeatAllTrack = useCallback((state) => {
+    if (state.sourceTracks.length === 0 || !state.currentTrack) return null;
+    const currentIndex = findTrackIndex(state.sourceTracks, state.currentTrack);
+    const nextIndex = currentIndex >= 0
+      ? (currentIndex + 1) % state.sourceTracks.length
+      : 0;
+    return state.sourceTracks[nextIndex] || null;
+  }, []);
 
   const skipToNext = useCallback(() => {
-    if (repeatRef.current === 'one') {
-      return currentTrack;
+    const state = stateRef.current;
+
+    if (state.repeatMode === 'one') {
+      return state.currentTrack;
     }
 
-    const next = resolveNextTrack();
-    if (next) {
-      if (currentTrack) {
-        setPlaybackHistory(prev => [...prev, currentTrack]);
-      }
-      setCurrentTrack(next);
+    let nextTrack = state.queue[0] || null;
+    let nextQueue = state.queue.slice(1);
+    let nextPlayNextCount = Math.max(0, state.playNextCount - 1);
+
+    if (!nextTrack && state.repeatMode === 'all') {
+      nextTrack = resolveRepeatAllTrack(state);
+      nextQueue = sourceQueueAfter(state.sourceTracks, nextTrack);
+      nextPlayNextCount = 0;
     }
-    return next || null;
-  }, [currentTrack, resolveNextTrack]);
+
+    if (!nextTrack) return null;
+
+    if (state.currentTrack) {
+      setHistory((prev) => [...prev, state.currentTrack]);
+    }
+    setCurrentTrack(nextTrack);
+    setQueue(nextQueue);
+    setPlayNextCount(nextPlayNextCount);
+    return nextTrack;
+  }, [resolveRepeatAllTrack]);
 
   const skipToPrevious = useCallback(() => {
-    if (playbackHistory.length === 0) return null;
+    const state = stateRef.current;
+    if (state.history.length === 0) return null;
 
-    const prevTrack = playbackHistory[playbackHistory.length - 1];
-    setPlaybackHistory(h => h.slice(0, -1));
-
-    if (currentTrack) {
-      setUserQueue(prev => [currentTrack, ...prev]);
+    const previousTrack = state.history[state.history.length - 1];
+    setHistory((prev) => prev.slice(0, -1));
+    if (state.currentTrack) {
+      setQueue((prev) => [state.currentTrack, ...prev]);
     }
+    setCurrentTrack(previousTrack);
+    setPlayNextCount((count) => count + (state.currentTrack ? 1 : 0));
+    return previousTrack;
+  }, []);
 
-    setCurrentTrack(prevTrack);
+  const jumpToTrack = useCallback((trackOrIndex) => {
+    const state = stateRef.current;
+    const selectedIndex = typeof trackOrIndex === 'number'
+      ? trackOrIndex
+      : findTrackIndex(state.queue, trackOrIndex);
+    if (selectedIndex < 0 || selectedIndex >= state.queue.length) return null;
 
-    const idx = findIn(playbackContext, prevTrack);
-    if (idx >= 0) setContextIndex(idx);
+    const selectedTrack = state.queue[selectedIndex];
+    const beforeSelected = state.queue.slice(0, selectedIndex);
+    const afterSelected = state.queue.slice(selectedIndex + 1);
 
-    return prevTrack;
-  }, [playbackHistory, currentTrack, playbackContext, findIn]);
+    if (state.currentTrack) {
+      setHistory((prev) => [...prev, state.currentTrack]);
+    }
+    setCurrentTrack(selectedTrack);
+    setQueue([...beforeSelected, ...afterSelected]);
+    setPlayNextCount((count) => {
+      if (selectedIndex < count) return Math.max(0, count - 1);
+      return Math.min(count, state.queue.length - 1);
+    });
+    return selectedTrack;
+  }, []);
+
+  const toggleShuffle = useCallback(() => {
+    const state = stateRef.current;
+    const nextShuffle = !state.shuffleEnabled;
+    setShuffleEnabled(nextShuffle);
+
+    if (!nextShuffle) return;
+
+    setQueue((prev) => [
+      ...prev.slice(0, state.playNextCount),
+      ...deterministicShuffle(
+        prev.slice(state.playNextCount),
+        `${state.currentTrack?.id || state.currentTrack?.filePath || 'none'}:${prev.length}`,
+      ),
+    ]);
+  }, []);
+
+  const toggleRepeat = useCallback(() => {
+    setRepeatMode((mode) => REPEAT_MODES[(REPEAT_MODES.indexOf(mode) + 1) % REPEAT_MODES.length]);
+  }, []);
+
+  const hasUpcomingSong = useCallback(() => {
+    const state = stateRef.current;
+    if (state.repeatMode === 'one') return Boolean(state.currentTrack);
+    if (state.queue.length > 0) return true;
+    return state.repeatMode === 'all' && state.sourceTracks.length > 0;
+  }, []);
 
   const handleEnded = useCallback(() => {
     if (repeatRef.current === 'one') return 'repeat-one';
-    const next = skipToNext();
-    return next ? 'continue' : 'stop';
+    return skipToNext() ? 'continue' : 'stop';
   }, [skipToNext]);
 
-  const hasUpcomingSong = useCallback(() => {
-    if (repeatRef.current === 'one') return true;
-    if (userQueue.length > 0) return true;
-    if (contextIndex < playbackContext.length - 1) return true;
-    if (repeatRef.current === 'all' && playbackContext.length > 0) return true;
-    if (autoplayTracks.length > 0) return true;
-    return false;
-  }, [userQueue.length, contextIndex, playbackContext.length, autoplayTracks.length]);
-
-  const toggleShuffle = useCallback(() => {
-    setShuffle(s => {
-      const next = !s;
-      if (next) {
-        setOriginalContextOrder([...playbackContext]);
-        if (playbackContext.length > 1 && currentTrack) {
-          const others = playbackContext.filter(t => t.id !== currentTrack.id && t.filePath !== currentTrack.filePath);
-          const shuffled = fisherYatesShuffle(others);
-          setPlaybackContext([currentTrack, ...shuffled]);
-          setContextIndex(0);
-        }
-      } else if (originalContextOrder.length > 0) {
-        setPlaybackContext(originalContextOrder);
-        const idx = currentTrack ? findIn(originalContextOrder, currentTrack) : -1;
-        setContextIndex(idx >= 0 ? idx : 0);
-        setOriginalContextOrder([]);
-      }
-      return next;
-    });
-  }, [playbackContext, currentTrack, originalContextOrder, findIn]);
-
-  const toggleRepeat = useCallback(() => {
-    setRepeat(r => {
-      const modes = ['off', 'all', 'one'];
-      return modes[(modes.indexOf(r) + 1) % modes.length];
-    });
-  }, []);
-
-  const getCombinedQueue = useCallback(() => {
-    const items = [];
-    if (currentTrack) {
-      items.push({ track: currentTrack, type: 'current', sourceIndex: -1 });
-    }
-    userQueue.forEach((track, i) => {
-      items.push({ track, type: 'manual', sourceIndex: i });
-    });
-    if (repeatRef.current !== 'one') {
-      for (let i = contextIndex + 1; i < playbackContext.length; i++) {
-        items.push({ track: playbackContext[i], type: 'auto', sourceIndex: i });
-      }
-      autoplayTracks.forEach((track, i) => {
-        items.push({ track, type: 'autoplay', sourceIndex: i });
-      });
-    }
-    return items;
-  }, [currentTrack, userQueue, contextIndex, playbackContext, autoplayTracks]);
-
-  const jumpToTrack = useCallback((track) => {
-    if (!track) return null;
-
-    if (currentTrack) {
-      setPlaybackHistory(prev => [...prev, currentTrack]);
-    }
-
-    const eqIdx = findIn(userQueue, track);
-    if (eqIdx >= 0) {
-      setUserQueue(prev => prev.filter((_, i) => i !== eqIdx));
-    } else {
-      const srcIdx = findIn(playbackContext, track);
-      if (srcIdx >= 0) {
-        setContextIndex(srcIdx);
-      }
-    }
-
-    setCurrentTrack(track);
-    return track;
-  }, [currentTrack, userQueue, playbackContext, findIn]);
+  const getCombinedQueue = useCallback(() => buildCombinedQueue(
+    stateRef.current.currentTrack,
+    stateRef.current.queue,
+  ), []);
 
   const getSessionSnapshot = useCallback(() => {
-    const toRef = (t) => t ? { id: t.id, filePath: t.filePath } : null;
+    const state = stateRef.current;
     return {
-      version: 1,
-      history: playbackHistory.map(toRef),
-      userQueue: userQueue.map(toRef),
-      playbackContext: playbackContext.map(toRef),
-      contextIndex,
-      shuffle,
-      repeat,
-      originalContextOrder: originalContextOrder.map(toRef),
-      autoplayTracks: autoplayTracks.map(toRef),
-      currentTrack: toRef(currentTrack),
+      version: 2,
+      currentTrack: state.currentTrack ? { id: state.currentTrack.id, filePath: state.currentTrack.filePath } : null,
+      queue: refsFromTracks(state.queue),
+      history: refsFromTracks(state.history),
+      shuffle: state.shuffleEnabled,
+      repeat: state.repeatMode,
+      sourceTracks: refsFromTracks(state.sourceTracks),
+      playNextCount: state.playNextCount,
     };
-  }, [playbackHistory, userQueue, playbackContext, contextIndex, shuffle, repeat, originalContextOrder, autoplayTracks, currentTrack]);
+  }, []);
 
   const restoreSession = useCallback((songs, snapshot) => {
-    if (!songs || !snapshot) return;
-    const find = (ref) => ref ? songs.find(s => s.id === ref.id || s.filePath === ref.filePath) || null : null;
-    const findArr = (arr) => (arr || []).map(find).filter(Boolean);
-    setPlaybackHistory(findArr(snapshot.history));
-    setUserQueue(findArr(snapshot.userQueue));
-    setPlaybackContext(findArr(snapshot.playbackContext));
-    setAutoplayTracks(findArr(snapshot.autoplayTracks));
-    setOriginalContextOrder(findArr(snapshot.originalContextOrder));
-    setContextIndex(typeof snapshot.contextIndex === 'number' ? snapshot.contextIndex : -1);
-    setShuffle(snapshot.shuffle === true);
-    setRepeat(typeof snapshot.repeat === 'string' ? snapshot.repeat : 'off');
-    const track = find(snapshot.currentTrack);
-    setCurrentTrack(track);
-    return track;
+    if (!songs || !snapshot) return null;
+    const find = (ref) => ref ? songs.find((song) => sameTrack(song, ref)) || null : null;
+    const findArr = (refs) => asArray(refs).map(find).filter(Boolean);
+
+    const restoredCurrent = find(snapshot.currentTrack);
+    const restoredQueue = snapshot.queue
+      ? findArr(snapshot.queue)
+      : findArr(snapshot.userQueue);
+    const restoredSource = snapshot.sourceTracks
+      ? findArr(snapshot.sourceTracks)
+      : findArr(snapshot.playbackContext);
+
+    setCurrentTrack(restoredCurrent);
+    setQueue(restoredQueue);
+    setHistory(findArr(snapshot.history));
+    setSourceTracks(restoredSource);
+    setShuffleEnabled(snapshot.shuffle === true);
+    setRepeatMode(typeof snapshot.repeat === 'string' ? snapshot.repeat : 'off');
+    setPlayNextCount(Math.max(0, Math.min(snapshot.playNextCount || 0, restoredQueue.length)));
+    return restoredCurrent;
   }, []);
 
   return {
-    history: playbackHistory,
+    history,
     currentTrack,
-    explicitQueue: userQueue,
-    sourceTracks: playbackContext,
-    sourceIndex: contextIndex,
-    autoplayTracks,
-    shuffle,
-    repeat,
+    explicitQueue: queue,
+    sourceTracks,
+    sourceIndex: findTrackIndex(sourceTracks, currentTrack),
+    autoplayTracks: [],
+    shuffle: shuffleEnabled,
+    repeat: repeatMode,
     repeatRef,
-    upcomingCount,
+    upcomingCount: queue.length,
     playTrackNow,
     playNext,
     addToQueue,
