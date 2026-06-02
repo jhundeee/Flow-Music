@@ -147,9 +147,18 @@ function extractDominantColor(src) {
         const winner = [...buckets.values()].sort((a, b) => (b.count * b.score) - (a.count * a.score))[0];
         if (!winner) throw new Error('No dominant color found');
 
+        let { r, g, b } = winner;
+        const brightness = (r + g + b) / 3;
+        if (brightness > 160) {
+          const scale = 160 / brightness;
+          r = Math.round(r * scale);
+          g = Math.round(g * scale);
+          b = Math.round(b * scale);
+        }
+
         const color = {
-          hex: rgbToHex(winner.r, winner.g, winner.b),
-          rgb: `${winner.r}, ${winner.g}, ${winner.b}`,
+          hex: rgbToHex(r, g, b),
+          rgb: `${r}, ${g}, ${b}`,
         };
         albumColorCache.set(src, color);
         resolve(color);
