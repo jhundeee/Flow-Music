@@ -237,6 +237,7 @@ function App() {
     playNext,
     getSessionSnapshot,
     restoreSession,
+    explicitQueue,
   } = usePlayback();
 
   const repeatRef = pbRepeatRef;
@@ -603,13 +604,14 @@ function App() {
     }
   }, [currentTrack, skipToPrevious, loadTrack, audioRef]);
 
-  const combinedQueue = useMemo(() =>
-    getCombinedQueue().map((item) => ({
-      song: item.track,
-      type: item.type === 'current' ? 'current' : item.type,
-      sourceIndex: item.sourceIndex,
-    })),
-  [getCombinedQueue]);
+  const combinedQueue = useMemo(() => {
+    const items = [];
+    if (currentTrack) items.push({ song: currentTrack, type: 'current', sourceIndex: -1 });
+    (explicitQueue || []).forEach((track, i) => {
+      items.push({ song: track, type: 'manual', sourceIndex: i });
+    });
+    return items;
+  }, [currentTrack, explicitQueue]);
 
   const playFromQueue = useCallback((combinedIndex) => {
     const items = getCombinedQueue();
