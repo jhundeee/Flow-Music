@@ -530,6 +530,11 @@ function App() {
     playbackTokenRef.current = token;
     const audio = audioRef.current;
     const targetVolume = Math.max(0, Math.min(1, volume / 100));
+    if (currentAudioUrlRef.current) {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
+    audio.pause();
     setCurrentTime(0);
     lastTimeUpdateRef.current = 0;
     loadLyricsForCurrent(track);
@@ -546,13 +551,16 @@ function App() {
         audio.currentTime = restoreTimeRef.current;
         restoreTimeRef.current = 0;
       }
+      audio.volume = targetVolume;
       setIsPlaying(true);
-    } catch (_) {
-      if (token === playbackTokenRef.current) audio.volume = targetVolume;
-      return;
+    } catch (err) {
+      console.error('loadTrack play failed:', err);
+      if (token === playbackTokenRef.current) {
+        audio.volume = targetVolume;
+        addToast('Failed to play audio. Try again.', 'error');
+      }
     }
-    audio.volume = targetVolume;
-  }, [audioRef, loadLyricsForCurrent, volume]);
+  }, [audioRef, loadLyricsForCurrent, volume, addToast]);
 
   const togglePlay = useCallback(() => {
     if (!songs.length) return;
@@ -572,16 +580,6 @@ function App() {
       setIsPlaying(false);
     }
   }, [songs, currentTrack, audioRef, loadTrack, playTrackNow, getCurrentViewSongs]);
-
-  const advanceToNext = useCallback(() => {
-    if (!currentTrack) return;
-    const next = skipToNext();
-    if (next) {
-      loadTrack(next);
-    } else {
-      setIsPlaying(false);
-    }
-  }, [currentTrack, skipToNext, loadTrack]);
 
   const handleNext = useCallback(() => {
     if (!currentTrack) return;
