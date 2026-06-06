@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ChevronLeft, Play, Shuffle } from 'lucide-react';
@@ -8,7 +8,6 @@ import NowPlaying from './components/NowPlaying';
 import { LibrarySection } from './components/Library';
 import ScanProgress from './components/ScanProgress';
 import FolderPicker from './components/FolderPicker';
-import TitleBar from './components/TitleBar';
 import Settings from './components/Settings';
 import Panorama from './components/Panorama';
 import { SECTION_ORDER } from './components/Panorama';
@@ -48,49 +47,9 @@ const APP_THEME_COLOR = '#6c5ce7';
 const APP_THEME_RGB = '108, 92, 231';
 const albumColorCache = new Map();
 
-const audioSrcCache = new Map();
-const AUDIO_CACHE_MAX = 100;
-
-function cacheEvictOne() {
-  if (audioSrcCache.size <= AUDIO_CACHE_MAX) return;
-  const first = audioSrcCache.keys().next().value;
-  const old = audioSrcCache.get(first);
-  if (old) URL.revokeObjectURL(old);
-  audioSrcCache.delete(first);
-}
-
-function cacheGet(key) {
-  if (!audioSrcCache.has(key)) return null;
-  const val = audioSrcCache.get(key);
-  audioSrcCache.delete(key);
-  audioSrcCache.set(key, val);
-  return val;
-}
-
-function cacheSet(key, val) {
-  audioSrcCache.set(key, val);
-  cacheEvictOne();
-}
-
-async function loadAudioFile(filePath) {
+function loadAudioFile(filePath) {
   if (!filePath) return '';
-  try {
-    const cached = cacheGet(filePath);
-    if (cached) return cached;
-    const result = await invoke('read_audio_file', { path: filePath });
-    const raw = atob(result.data);
-    const len = raw.length;
-    const buf = new ArrayBuffer(len);
-    const view = new Uint8Array(buf);
-    for (let i = 0; i < len; i++) view[i] = raw.charCodeAt(i);
-    const blob = new Blob([buf], { type: result.mime });
-    const url = URL.createObjectURL(blob);
-    cacheSet(filePath, url);
-    return url;
-  } catch (err) {
-    console.error('loadAudioFile failed:', err);
-    return '';
-  }
+  return convertFileSrc(filePath);
 }
 
 function formatTime(sec) {
@@ -540,9 +499,8 @@ function App() {
     loadLyricsForCurrent(track);
     try {
       if (token !== playbackTokenRef.current) return;
-      const src = await loadAudioFile(track.filePath);
+      const src = loadAudioFile(track.filePath);
       if (!src) { addToast('Failed to load audio file.', 'error'); return; }
-      console.log('Audio src:', src);
       audio.src = src;
       currentAudioUrlRef.current = src;
       await audio.play();
@@ -881,7 +839,6 @@ const handleJumpToCurrent = useCallback(() => {
     >
       {!showNowPlaying && (
       <>
-      <TitleBar />
       <nav className="pivot-nav">
         {SECTION_ORDER.map((f) => (
           <button

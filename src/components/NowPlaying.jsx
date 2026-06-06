@@ -1,5 +1,5 @@
-import React, { memo, useState, useEffect, useRef } from 'react';
-import { ChevronDown, Music, Minus, Square, X } from 'lucide-react';
+import React, { memo } from 'react';
+import { ChevronDown, Music } from 'lucide-react';
 import Queue from './Queue';
 import './NowPlaying.css';
 
@@ -16,29 +16,6 @@ const NowPlaying = memo(function NowPlaying({
   onQueueClear,
   onQueueDragReorder,
 }) {
-  const [maximized, setMaximized] = useState(false);
-  const [appWindow, setAppWindow] = useState(null);
-  const unsubRef = useRef(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-        if (cancelled) return;
-        const win = getCurrentWebviewWindow();
-        setAppWindow(win);
-        const max = await win.isMaximized();
-        if (!cancelled) setMaximized(max);
-        const fn = await win.onResized(async () => {
-          const m = await win.isMaximized();
-          if (!cancelled) setMaximized(m);
-        });
-        unsubRef.current = fn;
-      } catch (_) {}
-    })();
-    return () => { cancelled = true; unsubRef.current?.(); };
-  }, []);
 
   const bgStyle = currentTrack?.cover
     ? { backgroundImage: `url(${currentTrack.cover})` }
@@ -60,19 +37,6 @@ const NowPlaying = memo(function NowPlaying({
             <ChevronDown size={20} />
           </button>
         </div>
-        {appWindow && (
-          <div className="np-window-controls">
-            <button className="np-btn np-wctrl" onClick={() => appWindow.minimize()} aria-label="Minimize"><Minus size={14} /></button>
-            <button className="np-btn np-wctrl" onClick={() => appWindow.toggleMaximize()} aria-label={maximized ? 'Restore' : 'Maximize'}>
-              {maximized ? (
-                <span className="np-restore-icon"><span className="np-restore-back" /><span className="np-restore-front" /></span>
-              ) : (
-                <Square size={12} />
-              )}
-            </button>
-            <button className="np-btn np-wctrl np-wclose" onClick={() => appWindow.close()} aria-label="Close"><X size={14} /></button>
-          </div>
-        )}
       </div>
 
       <div className="np-body">
