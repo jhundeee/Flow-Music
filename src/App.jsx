@@ -15,6 +15,7 @@ import { useToast } from './components/Toast';
 import { useLibraryIndexes } from './hooks/useLibraryIndexes';
 import { normPath, isUnderFolder, filterSongsForFolders } from './utils/paths';
 import { normalizeSongs, songIdFromPath } from './utils/songId';
+import TitleBar from './components/TitleBar';
 import { usePlayback } from './hooks/usePlayback';
 
 const isTauri = typeof window !== 'undefined' && window.__TAURI_INTERNALS__;
@@ -837,6 +838,7 @@ const handleJumpToCurrent = useCallback(() => {
       className="app-shell"
       style={{ '--accent': albumTheme.hex, '--accent-rgb': albumTheme.rgb }}
     >
+      <TitleBar />
       {!showNowPlaying && (
       <>
       <nav className="pivot-nav">
