@@ -22,7 +22,6 @@ const Panorama = forwardRef(function Panorama(
     <div className="panorama-container">
       <div
         className="panorama-section"
-        style={{ borderLeft: `4px solid ${SECTION_ACCENTS[activeSection] || 'var(--accent-blue)'}` }}
       >
         {activeChild}
       </div>

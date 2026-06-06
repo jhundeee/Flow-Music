@@ -8,9 +8,18 @@ function asArray(tracks) {
   return Array.isArray(tracks) ? tracks.filter(Boolean) : [tracks].filter(Boolean);
 }
 
+function normTrackPath(p) {
+  return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 function sameTrack(a, b) {
   if (!a || !b) return false;
-  return a === b || a.id === b.id || a.filePath === b.filePath;
+  if (a === b) return true;
+  if (a.id && b.id && a.id === b.id) return true;
+  if (a.filePath && b.filePath) {
+    return normTrackPath(a.filePath) === normTrackPath(b.filePath);
+  }
+  return false;
 }
 
 function findTrackIndex(tracks, track) {

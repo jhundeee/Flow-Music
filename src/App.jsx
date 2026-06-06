@@ -14,7 +14,7 @@ import { SECTION_ORDER } from './components/Panorama';
 import { useToast } from './components/Toast';
 import { useLibraryIndexes } from './hooks/useLibraryIndexes';
 import { normPath, isUnderFolder, filterSongsForFolders } from './utils/paths';
-import { normalizeSongs, songIdFromPath } from './utils/songId';
+import { normalizeSongs } from './utils/songId';
 import TitleBar from './components/TitleBar';
 import { usePlayback } from './hooks/usePlayback';
 
@@ -302,24 +302,8 @@ function App() {
       }
       return s;
     });
-    const activeFolders = folders.filter((fp) => (
-      prunedSongs.some((s) => s.filePath && isUnderFolder(s.filePath, fp))
-    ));
-    setFolderPaths(activeFolders);
+    setFolderPaths(folders);
     setSongs(prunedSongs);
-    if (folders.length > 0) {
-      const needsSave = prunedSongs.length !== saved.length
-        || saved.some((s) => {
-          const nextId = songIdFromPath(s.filePath) || s.id;
-          return s.id !== nextId;
-        });
-      if (needsSave) {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prunedSongs)); } catch {}
-      }
-      if (activeFolders.length !== folders.length) {
-        try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(activeFolders)); } catch {}
-      }
-    }
     loadedRef.current = true;
   }, []);
 
@@ -406,9 +390,16 @@ function App() {
       const existingIds = new Set(songs.map((s) => s.id));
       const newSongs = scanned.filter((s) => !existingIds.has(s.id));
       if (newSongs.length > 0) {
+        const parentDirs = [...new Set(files.map((f) => {
+          const norm = f.replace(/\\/g, '/');
+          const idx = norm.lastIndexOf('/');
+          return idx >= 0 ? norm.slice(0, idx) : f;
+        }))];
+        const newFolders = dedupePaths([...folderPaths, ...parentDirs]);
         const updated = [...songs, ...newSongs];
         setSongs(updated);
-        saveLibrary(updated);
+        setFolderPaths(newFolders);
+        saveLibrary(updated, newFolders);
         addToast(`${newSongs.length} file${newSongs.length !== 1 ? 's' : ''} added to library.`, 'success');
       } else {
         addToast('Selected files are already in your library.', 'info');
@@ -416,7 +407,7 @@ function App() {
     } catch (err) {
       addToast(`Failed to scan files: ${err.message}`, 'error');
     }
-  }, [songs, addToast, saveLibrary]);
+  }, [songs, folderPaths, addToast, saveLibrary]);
 
   const selectFolder = useCallback(() => {
     (async () => {
