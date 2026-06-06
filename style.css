@@ -593,18 +593,44 @@ html, body {
   color: #ffffff;
 }
 
-.pb-vol-bar {
-  width: 60px;
-  height: 4px;
-  background: rgba(255,255,255,0.15);
-  position: relative;
+.pb-vol-range {
+  width: 80px;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to right, #ffffff var(--vol-pct), rgba(255,255,255,0.15) var(--vol-pct));
+  border-radius: 3px;
+  outline: none;
   cursor: pointer;
 }
 
-.pb-vol-fill {
-  height: 100%;
+.pb-vol-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
   background: #ffffff;
-  pointer-events: none;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 4px rgba(0,0,0,0.4);
+}
+
+.pb-vol-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 4px rgba(0,0,0,0.4);
+}
+
+.pb-vol-range::-moz-range-track {
+  height: 6px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 3px;
+  border: none;
 }
 
 

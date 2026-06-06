@@ -1,4 +1,4 @@
-import React, { memo, useRef, useCallback } from 'react';
+import React, { memo } from 'react';
 import { Heart, Shuffle, SkipBack, Pause, Play, SkipForward, Repeat, Repeat1, Rewind, FastForward, VolumeX, Volume1, Volume2, ArrowUp, Music } from 'lucide-react';
 
 function fmtTime(s) {
@@ -30,15 +30,6 @@ const PlaybackBar = memo(function PlaybackBar({
 }) {
   const displayTime = Math.min(syncTime, duration);
   const progressPercent = duration > 0 ? (displayTime / duration) * 100 : 0;
-  const volRef = useRef(null);
-
-  const handleVolClick = useCallback((e) => {
-    const rect = volRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const pct = (e.clientX - rect.left) / rect.width;
-    onVolumeChange({ target: { value: Math.round(Math.max(0, Math.min(pct * 100, 100))) } });
-  }, [onVolumeChange]);
-
   return (
     <div
       className="bottom-player-wrapper"
@@ -90,9 +81,15 @@ const PlaybackBar = memo(function PlaybackBar({
           <span className="pb-vol-icon">
             {volume <= 0 ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
           </span>
-          <div className="pb-vol-bar" ref={volRef} onClick={handleVolClick}>
-            <div className="pb-vol-fill" style={{ width: `${volume}%` }} />
-          </div>
+          <input
+            type="range"
+            className="pb-vol-range"
+            min={0}
+            max={100}
+            value={volume}
+            onChange={onVolumeChange}
+            style={{ '--vol-pct': `${volume}%` }}
+          />
         </div>
       </div>
     </div>
