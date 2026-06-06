@@ -25,9 +25,11 @@
         "height": 800,
         "minWidth": 800,
         "minHeight": 500,
-        "decorations": true,
+        "decorations": false,
         "center": true,
         "resizable": true,
+        "transparent": true,
+        "windowEffects": { "effects": ["mica"] },
         "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required"
       }
     ],

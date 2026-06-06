@@ -5,7 +5,6 @@ export default function TitleBar() {
   const [maximized, setMaximized] = useState(false);
   const [appWindow, setAppWindow] = useState(null);
   const unsubRef = useRef(null);
-  const isTauri = appWindow !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -29,9 +28,8 @@ export default function TitleBar() {
 
   return (
     <div className="title-bar" data-tauri-drag-region>
-      <img className="tb-icon" src="/icon.png" alt="" />
       <span className="tb-label">flow music</span>
-      {isTauri && (
+      {appWindow && (
         <div className="tb-controls">
           <button className="tb-ctrl" onClick={() => appWindow.minimize()} aria-label="Minimize"><Minus size={14} /></button>
           <button className="tb-ctrl" onClick={() => appWindow.toggleMaximize()} aria-label={maximized ? 'Restore' : 'Maximize'}>

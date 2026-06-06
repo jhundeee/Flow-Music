@@ -8,6 +8,7 @@ import NowPlaying from './components/NowPlaying';
 import { LibrarySection } from './components/Library';
 import ScanProgress from './components/ScanProgress';
 import FolderPicker from './components/FolderPicker';
+import TitleBar from './components/TitleBar';
 import Settings from './components/Settings';
 import Panorama from './components/Panorama';
 import { SECTION_ORDER } from './components/Panorama';
@@ -839,6 +840,7 @@ const handleJumpToCurrent = useCallback(() => {
     >
       {!showNowPlaying && (
       <>
+      <TitleBar />
       <nav className="pivot-nav">
         {SECTION_ORDER.map((f) => (
           <button
