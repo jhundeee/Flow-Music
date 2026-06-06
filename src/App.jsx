@@ -213,26 +213,6 @@ function App() {
     return map;
   }, [songs]);
 
-  const getCurrentViewSongs = useCallback(() => {
-    let viewSongs = songs;
-    if (drillFilter) {
-      if (drillFilter.key === 'folder') {
-        viewSongs = viewSongs.filter(s => s.folder === drillFilter.value);
-      } else {
-        viewSongs = viewSongs.filter(s => s[drillFilter.key] === drillFilter.value);
-      }
-    } else if (filter === 'favorites') {
-      viewSongs = viewSongs.filter(s => s.isFavorite);
-    }
-    return viewSongs;
-  }, [songs, filter, drillFilter]);
-
-  const updateSliderFill = useCallback((slider) => {
-    if (!slider) return;
-    const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
-    slider.style.setProperty('--progress', pct + '%');
-  }, []);
-
   const loadVolume = useCallback(() => {
     try {
       const saved = localStorage.getItem(VOLUME_KEY);
@@ -517,8 +497,7 @@ function App() {
     if (!currentTrack) {
       const first = songs.find(s => s.filePath);
       if (first) {
-        const viewSongs = getCurrentViewSongs();
-        playTrackNow(first, viewSongs);
+        playTrackNow(first, filteredSongs);
         loadTrack(first);
       }
       return;
@@ -529,7 +508,7 @@ function App() {
       audioRef.current.pause();
       setIsPlaying(false);
     }
-  }, [songs, currentTrack, audioRef, loadTrack, playTrackNow, getCurrentViewSongs]);
+  }, [songs, currentTrack, audioRef, loadTrack, playTrackNow, filteredSongs]);
 
   const handleNext = useCallback(() => {
     if (!currentTrack) return;
@@ -570,19 +549,16 @@ function App() {
   const handlePlayFromLibrary = useCallback((masterIdx) => {
     const track = songs[masterIdx];
     if (!track) { console.warn('handlePlayFromLibrary: no track at index', masterIdx); return; }
-    console.log('Playing track:', track.name, 'filePath:', track.filePath);
-    const viewSongs = getCurrentViewSongs();
-    playTrackNow(track, viewSongs);
+    playTrackNow(track, filteredSongs);
     loadTrack(track);
-  }, [songs, getCurrentViewSongs, playTrackNow, loadTrack]);
+  }, [songs, filteredSongs, playTrackNow, loadTrack]);
 
   const handlePlayAll = useCallback(() => {
-    const viewSongs = getCurrentViewSongs();
-    if (viewSongs.length === 0) return;
-    const first = viewSongs[0];
+    if (filteredSongs.length === 0) return;
+    const first = filteredSongs[0];
     const masterIdx = songIndexById.get(first.id);
     if (masterIdx != null) handlePlayFromLibrary(masterIdx);
-  }, [getCurrentViewSongs, songIndexById, handlePlayFromLibrary]);
+  }, [filteredSongs, songIndexById, handlePlayFromLibrary]);
 
   const handleToggleFavorite = useCallback((masterIdx) => {
     setSongs(prev => {
@@ -593,16 +569,15 @@ function App() {
   }, []);
 
   const handleShuffleAll = useCallback(() => {
-    const viewSongs = getCurrentViewSongs();
-    if (viewSongs.length === 0) return;
-    const shuffled = [...viewSongs];
+    if (filteredSongs.length === 0) return;
+    const shuffled = [...filteredSongs];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     playTrackNow(shuffled[0], shuffled);
     loadTrack(shuffled[0]);
-  }, [getCurrentViewSongs, playTrackNow, loadTrack]);
+  }, [filteredSongs, playTrackNow, loadTrack]);
 
   const currentTimeRef = useRef(0);
   const lastTimeUpdateRef = useRef(0);
@@ -830,8 +805,7 @@ const handleJumpToCurrent = useCallback(() => {
       style={{ '--accent': albumTheme.hex, '--accent-rgb': albumTheme.rgb }}
     >
       <TitleBar />
-      {!showNowPlaying && (
-      <>
+      <div style={{ display: showNowPlaying ? 'none' : 'contents' }}>
       <nav className="pivot-nav">
         {SECTION_ORDER.map((f) => (
           <button
@@ -846,7 +820,7 @@ const handleJumpToCurrent = useCallback(() => {
         <button className="pivot-add-btn" onClick={selectFolder}>+ add folder</button>
       </nav>
       <div className="app-main">
-{!showNowPlaying && !drillFilter && (
+{!drillFilter && (
   <Panorama activeSection={filter}>
     <LibrarySection section="all" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={handleToggleFavorite} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
     <LibrarySection section="artists" artists={artists} onFilterBy={handleFilterBy} />
@@ -855,7 +829,7 @@ const handleJumpToCurrent = useCallback(() => {
     <LibrarySection section="favorites" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={handleToggleFavorite} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
   </Panorama>
 )}
-{!showNowPlaying && drillFilter && (
+{drillFilter && (
   <div style={{ display: 'flex', flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
     <div className="panorama-section" style={{ width: '100vw', overflowY: 'auto' }}>
       <div className="drill-header">
@@ -890,8 +864,7 @@ const handleJumpToCurrent = useCallback(() => {
           <Shuffle size={18} />
         </button>
       </div>
-      </>
-      )}
+      </div>
 {showNowPlaying && (
   <div className="np-overlay">
     <NowPlaying
