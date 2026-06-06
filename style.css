@@ -32,7 +32,7 @@
 html, body {
   height: 100%;
   font-family: 'Segoe UI', 'Segoe UI WP', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
-  background: transparent;
+  background: var(--bg-dark);
   color: var(--text);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -46,7 +46,6 @@ html, body {
   overflow: hidden;
   padding-bottom: 64px;
   box-sizing: border-box;
-  background: rgba(26, 26, 26, 0.85);
 }
 
 .app-main {
@@ -782,8 +781,7 @@ html, body {
    ============================= */
 .title-bar {
   height: var(--titlebar-h);
-  background: rgba(26, 26, 26, 0.5);
-  backdrop-filter: blur(12px);
+  background: var(--bg);
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -833,7 +831,7 @@ html, body {
 
 .title-bar .tb-restore-icon { position: relative; display: inline-flex; width: 12px; height: 12px; }
 .title-bar .tb-restore-back { position: absolute; bottom: 0; right: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: transparent; }
-.title-bar .tb-restore-front { position: absolute; top: 0; left: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: transparent; }
+.title-bar .tb-restore-front { position: absolute; top: 0; left: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: var(--bg); }
 
 /* =============================
    MODALS / FOLDER PICKER / SETTINGS
