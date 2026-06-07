@@ -492,6 +492,8 @@ function App() {
     }
   }, [audioRef, loadLyricsForCurrent, volume, addToast]);
 
+  const { filteredSongs, artists, albums, folderCards } = useLibraryIndexes(songs, filter, drillFilter);
+
   const togglePlay = useCallback(() => {
     if (!songs.length) return;
     if (!currentTrack) {
@@ -788,8 +790,6 @@ const handleJumpToCurrent = useCallback(() => {
     });
     return () => { cancelled = true; };
   }, [song?.cover]);
-
-  const { filteredSongs, artists, albums, folderCards } = useLibraryIndexes(songs, filter, drillFilter);
 
   const handleFilterBy = useCallback((key, value) => {
     setDrillFilter({ key, value });
