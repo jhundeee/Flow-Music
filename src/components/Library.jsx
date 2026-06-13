@@ -246,5 +246,5 @@ const LibrarySection = memo(function LibrarySection({ section, filteredSongs, ar
   }
 });
 
-export { LibrarySection, SongsSection };
+export { LibrarySection };
 export default Library;

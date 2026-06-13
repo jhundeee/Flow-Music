@@ -80,9 +80,6 @@ function buildCombinedQueue(currentTrack, queue) {
   return items;
 }
 
-// QueueState contract:
-// currentTrack is stored separately, queue contains only upcoming tracks,
-// history is independent, and sourceTracks is read-only metadata for repeat-all.
 export function usePlayback() {
   const [currentTrack, setCurrentTrack] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -123,7 +120,6 @@ export function usePlayback() {
           sourceTracks: refsFromTracks(state.sourceTracks),
           playNextCount: state.playNextCount,
 
-          // Kept for compatibility with older saved sessions.
           userQueue: refsFromTracks(state.queue),
           playbackContext: refsFromTracks(state.sourceTracks),
           contextIndex: findTrackIndex(state.sourceTracks, state.currentTrack),
@@ -347,16 +343,11 @@ export function usePlayback() {
   }, []);
 
   return {
-    history,
     currentTrack,
     explicitQueue: queue,
-    sourceTracks,
-    sourceIndex: findTrackIndex(sourceTracks, currentTrack),
-    autoplayTracks: [],
     shuffle: shuffleEnabled,
     repeat: repeatMode,
     repeatRef,
-    upcomingCount: queue.length,
     playTrackNow,
     playNext,
     addToQueue,
@@ -366,8 +357,6 @@ export function usePlayback() {
     skipToNext,
     skipToPrevious,
     jumpToTrack,
-    handleEnded,
-    hasUpcomingSong,
     toggleShuffle,
     toggleRepeat,
     getCombinedQueue,

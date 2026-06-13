@@ -2,14 +2,6 @@ import React, { forwardRef, memo } from 'react';
 
 const SECTION_ORDER = ['all', 'artists', 'albums', 'folders', 'favorites'];
 
-const SECTION_ACCENTS = {
-  all: 'var(--accent)',
-  artists: 'var(--accent)',
-  albums: 'var(--accent)',
-  folders: 'var(--accent)',
-  favorites: 'var(--accent)',
-};
-
 const Panorama = forwardRef(function Panorama(
   { activeSection, children },
   ref,
@@ -30,4 +22,4 @@ const Panorama = forwardRef(function Panorama(
 });
 
 export default memo(Panorama);
-export { SECTION_ORDER, SECTION_ACCENTS };
+export { SECTION_ORDER };

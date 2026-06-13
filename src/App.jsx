@@ -13,7 +13,7 @@ import Panorama from './components/Panorama';
 import { SECTION_ORDER } from './components/Panorama';
 import { useToast } from './components/Toast';
 import { useLibraryIndexes } from './hooks/useLibraryIndexes';
-import { normPath, isUnderFolder, filterSongsForFolders } from './utils/paths';
+import { normPath, isUnderFolder, filterSongsForFolders, collectLibraryRoots, parentDir } from './utils/paths';
 import { normalizeSongs } from './utils/songId';
 import TitleBar from './components/TitleBar';
 import { usePlayback } from './hooks/usePlayback';
@@ -244,7 +244,6 @@ function App() {
     try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch {}
     if (!Array.isArray(folders)) folders = [];
     if (!Array.isArray(saved)) saved = [];
-    // Migrate old snake_case keys from previous Rust serialization
     const snakeToCamel = (obj) => {
       const map = { file_path: 'filePath', relative_path: 'relativePath', album_artist: 'albumArtist', track_no: 'trackNo', is_favorite: 'isFavorite', lyrics_source: 'lyricsSource', lyrics_unsynced: 'lyricsUnsynced', lyrics_lrc: 'lyricsLrc', lyrics_lrc_meta: 'lyricsLrcMeta', file_name: 'fileName' };
       for (const [snake, camel] of Object.entries(map)) {
@@ -254,12 +253,24 @@ function App() {
       return obj;
     };
     saved = saved.map(snakeToCamel);
-    // Discard any folder paths or file paths that look like URLs (from old sessions)
     const isRealPath = (p) => p && !p.startsWith('http://') && !p.startsWith('https://') && !p.includes('localhost');
     folders = folders.filter(isRealPath);
     saved = saved.filter((s) => isRealPath(s.filePath));
     folders = dedupePaths(folders);
+    const rootsFromSongs = dedupePaths(collectLibraryRoots(saved));
+    if (folders.length === 0 && rootsFromSongs.length > 0) {
+      folders = rootsFromSongs;
+    }
     let prunedSongs = normalizeSongs(filterSongsForFolders(saved, folders));
+    if (prunedSongs.length === 0 && saved.length > 0 && rootsFromSongs.length > 0) {
+      folders = dedupePaths([...folders, ...rootsFromSongs]);
+      prunedSongs = normalizeSongs(filterSongsForFolders(saved, folders));
+    }
+    prunedSongs = prunedSongs.map((s) => {
+      if (s.libraryRoot) return s;
+      const root = folders.find((fp) => isUnderFolder(s.filePath, fp));
+      return root ? { ...s, libraryRoot: root } : s;
+    });
     const invalidFolders = new Set(['', 'unknown', 'unknown album', 'unknown artist', 'localhost', 'localhost:5173', 'localhost5173']);
     prunedSongs = prunedSongs.map((s) => {
       const folderStr = s.folder ? s.folder.trim().toLowerCase() : '';
@@ -284,18 +295,38 @@ function App() {
     });
     setFolderPaths(folders);
     setSongs(prunedSongs);
+    folderPathsRef.current = folders;
+    songsRef.current = prunedSongs;
     loadedRef.current = true;
+
+    try {
+      const storedFolders = localStorage.getItem(FOLDERS_KEY) || '[]';
+      const storedSongs = localStorage.getItem(STORAGE_KEY) || '[]';
+      if (storedFolders !== JSON.stringify(folders) || storedSongs !== JSON.stringify(prunedSongs)) {
+        localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(prunedSongs));
+      }
+    } catch {}
   }, []);
 
   const loadedRef = useRef(false);
 
   const saveLibrary = useCallback((updatedSongs, updatedFolders) => {
     if (updatedSongs !== undefined) {
+      songsRef.current = updatedSongs;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSongs)); } catch {}
     }
     if (updatedFolders !== undefined) {
+      folderPathsRef.current = updatedFolders;
       try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(updatedFolders)); } catch {}
     }
+  }, []);
+
+  const persistLibrary = useCallback(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(songsRef.current));
+      localStorage.setItem(FOLDERS_KEY, JSON.stringify(folderPathsRef.current));
+    } catch {}
   }, []);
   const folderPathsRef = useRef(folderPaths);
   const songsRef = useRef(songs);
@@ -304,13 +335,16 @@ function App() {
   songsRef.current = songs;
 
   useEffect(() => {
-    if (!loadedRef.current && songs.length === 0) return;
+    if (!loadedRef.current) return;
     clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(songs)); } catch {}
-    }, 500);
+    saveTimerRef.current = setTimeout(persistLibrary, 500);
     return () => clearTimeout(saveTimerRef.current);
-  }, [songs]);
+  }, [songs, folderPaths, persistLibrary]);
+
+  const tagSongsWithRoot = useCallback((scanned, rootPath) => {
+    if (!rootPath) return scanned;
+    return scanned.map((s) => ({ ...s, libraryRoot: rootPath }));
+  }, []);
 
   const handleScanFolder = useCallback(async (folderPath, recursive) => {
     setShowFolderPicker(false);
@@ -333,14 +367,17 @@ function App() {
         setScanState((prev) => ({ ...prev, visible: false }));
         return;
       }
+      const scannedTagged = tagSongsWithRoot(scanned, folderPath);
       const prevFolders = dedupePaths(folderPathsRef.current);
       const prevSongs = songsRef.current;
       const existingIds = new Set(prevSongs.map((s) => s.id));
-      const newSongs = scanned.filter((s) => !existingIds.has(s.id));
+      const newSongs = scannedTagged.filter((s) => !existingIds.has(s.id));
       const fp = normPath(folderPath);
       if (newSongs.length > 0) {
         const newFolders = dedupePaths([...prevFolders, folderPath]);
         const updated = [...prevSongs, ...newSongs];
+        folderPathsRef.current = newFolders;
+        songsRef.current = updated;
         setFolderPaths(newFolders);
         setSongs(updated);
         saveLibrary(updated, newFolders);
@@ -350,6 +387,7 @@ function App() {
         if (!alreadyExists) {
           addToast('All songs in this folder are already in your library.', 'info');
           const newFolders = dedupePaths([...prevFolders, folderPath]);
+          folderPathsRef.current = newFolders;
           setFolderPaths(newFolders);
           saveLibrary(prevSongs, newFolders);
         } else {
@@ -361,22 +399,24 @@ function App() {
     }
     scanResultRef.current = '';
     setScanState((prev) => ({ ...prev, visible: false }));
-  }, [addToast, saveLibrary]);
+  }, [addToast, saveLibrary, tagSongsWithRoot]);
 
   const handleScanFiles = useCallback(async (files) => {
     if (!files || files.length === 0) return;
     try {
       const scanned = await invoke('scan_files', { files });
+      const scannedTagged = scanned.map((s) => ({
+        ...s,
+        libraryRoot: parentDir(s.filePath),
+      }));
       const existingIds = new Set(songs.map((s) => s.id));
-      const newSongs = scanned.filter((s) => !existingIds.has(s.id));
+      const newSongs = scannedTagged.filter((s) => !existingIds.has(s.id));
       if (newSongs.length > 0) {
-        const parentDirs = [...new Set(files.map((f) => {
-          const norm = f.replace(/\\/g, '/');
-          const idx = norm.lastIndexOf('/');
-          return idx >= 0 ? norm.slice(0, idx) : f;
-        }))];
+        const parentDirs = dedupePaths(newSongs.map((s) => s.libraryRoot).filter(Boolean));
         const newFolders = dedupePaths([...folderPaths, ...parentDirs]);
         const updated = [...songs, ...newSongs];
+        folderPathsRef.current = newFolders;
+        songsRef.current = updated;
         setSongs(updated);
         setFolderPaths(newFolders);
         saveLibrary(updated, newFolders);
@@ -654,7 +694,6 @@ function App() {
     setCurrentTime(e.currentTarget.currentTime);
   }, []);
 
-  // Expose playback state to system media controls (Windows taskbar widget etc.)
   const mediaCtxRef = useRef(null);
   mediaCtxRef.current = { currentTrack, songs, isPlaying, audioRef, togglePlay, handlePrevious, handleNext, handleSeekForward, handleSeekBackward, setIsPlaying };
   useEffect(() => {
@@ -674,7 +713,6 @@ function App() {
     navigator.mediaSession.setActionHandler('nexttrack', () => ctx().handleNext());
     navigator.mediaSession.setActionHandler('seekforward', () => ctx().handleSeekForward());
     navigator.mediaSession.setActionHandler('seekbackward', () => ctx().handleSeekBackward());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -724,25 +762,30 @@ const handlePlayNext = useCallback((track) => {
 }, [playNext, addToast]);
 
 const handleSaveQueue = useCallback(() => {
-  // TODO: Implement actual playlist saving
   addToast('Queue saved as playlist', 'success');
 }, [addToast]);
 
 const handleJumpToCurrent = useCallback(() => {
-  // Scroll queue to current track (which is at index 0 in combined queue)
-  // This would require accessing the queue DOM element and scrolling
-  // For now, we'll just show a toast
   addToast('Jumped to current track', 'info');
 }, [addToast]);
 
   useEffect(() => {
     const flush = () => {
       clearTimeout(saveTimerRef.current);
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(songsRef.current)); } catch {}
+      persistLibrary();
     };
     window.addEventListener('beforeunload', flush);
-    return () => window.removeEventListener('beforeunload', flush);
-  }, []);
+    let unlistenClose;
+    if (isTauri) {
+      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+        getCurrentWindow().onCloseRequested(() => { flush(); }).then((fn) => { unlistenClose = fn; });
+      }).catch(() => {});
+    }
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      unlistenClose?.();
+    };
+  }, [persistLibrary]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -773,12 +816,7 @@ const handleJumpToCurrent = useCallback(() => {
   useEffect(() => {
     loadVolume();
     loadLibrary();
-    const handleSliderInput = (e) => updateSliderFill(e.target);
-    document.querySelectorAll('input[type="range"]').forEach(slider => slider.addEventListener('input', handleSliderInput));
-    return () => {
-      document.querySelectorAll('input[type="range"]').forEach(slider => slider.removeEventListener('input', handleSliderInput));
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const sessionRestoredRef = useRef(false);
 
@@ -865,7 +903,7 @@ const handleJumpToCurrent = useCallback(() => {
     <LibrarySection section="all" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={handleToggleFavorite} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
     <LibrarySection section="artists" artists={artists} onFilterBy={handleFilterBy} />
     <LibrarySection section="albums" albums={albums} onFilterBy={handleFilterBy} />
-    <LibrarySection section="folders" folderCards={folderCards} folderPaths={folderPaths} onFilterBy={handleFilterBy} onRemoveFolder={removeFolder} onRemoveFolderByName={removeFolderByName} />
+    <LibrarySection section="folders" folderCards={folderCards} folderPaths={folderPaths} onFilterBy={handleFilterBy} onRemoveFolderByName={removeFolderByName} />
     <LibrarySection section="favorites" filteredSongs={filteredSongs} onPlaySong={handlePlayFromLibrary} currentTrack={song} songIndexById={songIndexById} onToggleFavorite={handleToggleFavorite} onFilterBy={handleFilterBy} onPlayNext={handlePlayNext} onAddToQueue={handleAddToQueue} />
   </Panorama>
 )}
@@ -888,7 +926,6 @@ const handleJumpToCurrent = useCallback(() => {
         songIndexById={songIndexById}
         onToggleFavorite={handleToggleFavorite}
         onFilterBy={handleFilterBy}
-        onRemoveFolder={removeFolder}
         onPlayNext={handlePlayNext}
         onAddToQueue={handleAddToQueue}
       />

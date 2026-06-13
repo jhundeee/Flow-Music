@@ -1,5 +1,4 @@
 export function normPath(p) {
-  // Windows: normalize to lowercase, remove trailing slashes
   return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
@@ -18,3 +17,18 @@ export function filterSongsForFolders(songs, folderPaths) {
   });
   return [...browser, ...managed];
 }
+
+export function parentDir(filePath) {
+  if (!filePath) return null;
+  const idx = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return idx >= 0 ? filePath.slice(0, idx) : filePath;
+}
+
+export function collectLibraryRoots(songs) {
+  const roots = [];
+  for (const s of songs) {
+    if (s.libraryRoot && typeof s.libraryRoot === 'string') roots.push(s.libraryRoot);
+  }
+  return roots;
+}
+

@@ -1,4 +1,3 @@
-/** Hide React's DevTools install hint in dev (Electron has no extension store). */
 if (import.meta.env.DEV) {
   const devtoolsMsg = 'Download the React DevTools';
   for (const method of ['info', 'log']) {

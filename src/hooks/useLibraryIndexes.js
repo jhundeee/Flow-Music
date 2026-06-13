@@ -3,15 +3,6 @@ import { useMemo } from 'react';
 const collator = new Intl.Collator('en', { sensitivity: 'base' });
 
 export function useLibraryIndexes(songs, filter, drillFilter) {
-  const songIndexById = useMemo(() => {
-    const map = new Map();
-    for (let i = 0; i < songs.length; i++) {
-      map.set(songs[i].id, i);
-    }
-    return map;
-  }, [songs]);
-
-  // Single pass: build artists, albums, folderCards together
   const { artists, albums, folderCards } = useMemo(() => {
     const artistMap = new Map();
     const albumMap = new Map();
@@ -65,7 +56,6 @@ export function useLibraryIndexes(songs, filter, drillFilter) {
     };
   }, [songs]);
 
-  // Only sort when songs will be displayed in a table
   const filteredSongs = useMemo(() => {
     let filtered;
     if (drillFilter) {
@@ -85,5 +75,5 @@ export function useLibraryIndexes(songs, filter, drillFilter) {
     return filtered;
   }, [songs, filter, drillFilter]);
 
-  return { songIndexById, filteredSongs, artists, albums, folderCards };
+  return { filteredSongs, artists, albums, folderCards };
 }

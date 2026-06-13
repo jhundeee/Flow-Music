@@ -1,5 +1,4 @@
-/** Stable unique id from absolute file path (full base64url, not truncated). */
-export function songIdFromPath(filePath) {
+function songIdFromPath(filePath) {
   if (!filePath) return null;
   if (filePath.startsWith('blob:')) return filePath;
   const bytes = new TextEncoder().encode(filePath);
