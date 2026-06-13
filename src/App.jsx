@@ -650,6 +650,46 @@ function App() {
     setCurrentTime(e.currentTarget.currentTime);
   }, []);
 
+  // Expose playback state to system media controls (Windows taskbar widget etc.)
+  const mediaCtxRef = useRef(null);
+  mediaCtxRef.current = { currentTrack, song, songs, isPlaying, audioRef, togglePlay, handlePrevious, handleNext, handleSeekForward, handleSeekBackward, setIsPlaying };
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const ctx = () => mediaCtxRef.current;
+    navigator.mediaSession.setActionHandler('play', () => {
+      const c = ctx();
+      if (!c.currentTrack && c.songs.length > 0) c.togglePlay();
+      else c.audioRef.current?.play().then(() => c.setIsPlaying(true)).catch(() => {});
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      const c = ctx();
+      c.audioRef.current?.pause();
+      c.setIsPlaying(false);
+    });
+    navigator.mediaSession.setActionHandler('previoustrack', () => ctx().handlePrevious());
+    navigator.mediaSession.setActionHandler('nexttrack', () => ctx().handleNext());
+    navigator.mediaSession.setActionHandler('seekforward', () => ctx().handleSeekForward());
+    navigator.mediaSession.setActionHandler('seekbackward', () => ctx().handleSeekBackward());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !song) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.name || '',
+      artist: song.artist || '',
+      album: song.album || '',
+      artwork: song.cover
+        ? [{ src: song.cover, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    });
+  }, [song]);
+
   const handleOpenNowPlaying = useCallback(() => setShowNowPlaying(true), []);
   const handleCloseNowPlaying = useCallback(() => {
     setShowNowPlaying(false);
