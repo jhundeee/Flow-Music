@@ -115,22 +115,6 @@
   text-align: center;
 }
 
-.np-window-controls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.np-wctrl {
-  width: 28px;
-  height: 28px;
-}
-
-.np-wclose:hover {
-  background: var(--accent-red);
-  color: #fff;
-}
-
 /* ─── Body: 50/50 split ─── */
 .np-body {
   flex: 1;
