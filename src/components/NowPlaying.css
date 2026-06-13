@@ -79,6 +79,12 @@
   gap: 4px;
 }
 
+.np-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .np-minimize-btn {
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 6px;
@@ -109,7 +115,6 @@
   text-align: center;
 }
 
-/* Window control buttons in top bar */
 .np-window-controls {
   display: flex;
   align-items: center;
@@ -117,44 +122,13 @@
 }
 
 .np-wctrl {
-  width: 32px;
-  height: 32px;
-}
-
-.np-wctrl:hover {
-  background: rgba(255, 255, 255, 0.1);
+  width: 28px;
+  height: 28px;
 }
 
 .np-wclose:hover {
-  background: var(--accent-red, #e81123);
+  background: var(--accent-red);
   color: #fff;
-}
-
-.np-restore-icon {
-  position: relative;
-  display: inline-flex;
-  width: 12px;
-  height: 12px;
-}
-
-.np-restore-back,
-.np-restore-front {
-  position: absolute;
-  border: 1.5px solid currentColor;
-  width: 8px;
-  height: 8px;
-}
-
-.np-restore-back {
-  top: 2px;
-  left: 0;
-  opacity: 0.5;
-}
-
-.np-restore-front {
-  top: 0;
-  left: 2px;
-  background: var(--np-bg, #0b0f1a);
 }
 
 /* ─── Body: 50/50 split ─── */

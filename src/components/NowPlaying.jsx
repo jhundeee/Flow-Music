@@ -1,5 +1,5 @@
-import React, { memo } from 'react';
-import { ChevronDown, Music } from 'lucide-react';
+import React, { memo, useState, useEffect, useRef } from 'react';
+import { ChevronDown, Minus, Square, X, Music } from 'lucide-react';
 import Queue from './Queue';
 import './NowPlaying.css';
 
@@ -16,6 +16,23 @@ const NowPlaying = memo(function NowPlaying({
   onQueueClear,
   onQueueDragReorder,
 }) {
+  const [appWindow, setAppWindow] = useState(null);
+  const unsubRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+        if (cancelled) return;
+        const win = getCurrentWebviewWindow();
+        setAppWindow(win);
+        const fn = await win.onResized(() => {});
+        unsubRef.current = fn;
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; unsubRef.current?.(); };
+  }, []);
 
   const bgStyle = currentTrack?.cover
     ? { backgroundImage: `url(${currentTrack.cover})` }
@@ -36,6 +53,15 @@ const NowPlaying = memo(function NowPlaying({
           <button className="np-btn np-minimize-btn" onClick={onClose} title="Minimize">
             <ChevronDown size={20} />
           </button>
+        </div>
+        <div className="np-topbar-right">
+          {appWindow && (
+            <div className="np-window-controls">
+              <button className="np-btn np-wctrl" onClick={() => appWindow.minimize()} aria-label="Minimize"><Minus size={14} /></button>
+              <button className="np-btn np-wctrl" onClick={() => appWindow.toggleMaximize()} aria-label="Maximize"><Square size={12} /></button>
+              <button className="np-btn np-wctrl np-wclose" onClick={() => appWindow.close()} aria-label="Close"><X size={14} /></button>
+            </div>
+          )}
         </div>
       </div>
 
