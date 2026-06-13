@@ -834,12 +834,12 @@ html, body {
   flex: 1;
 }
 
-.title-bar .tb-controls {
+.tb-controls {
   display: flex;
   -webkit-app-region: no-drag;
 }
 
-.title-bar .tb-ctrl {
+.tb-ctrl {
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -852,14 +852,14 @@ html, body {
   font-size: 0.75rem;
   transition: background 0.12s, color 0.12s;
 }
-.title-bar .tb-ctrl:hover { background: rgba(255,255,255,0.1); }
-.title-bar .tb-ctrl:active { background: rgba(255,255,255,0.16); transform: scale(0.92); }
-.title-bar .tb-ctrl.tb-close:hover { background: var(--accent-red); color: #fff; }
-.title-bar .tb-ctrl.tb-close:active { background: #c01200; transform: scale(0.92); }
+.tb-ctrl:hover { background: rgba(255,255,255,0.1); }
+.tb-ctrl:active { background: rgba(255,255,255,0.16); transform: scale(0.92); }
+.tb-ctrl.tb-close:hover { background: var(--accent-red); color: #fff; }
+.tb-ctrl.tb-close:active { background: #c01200; transform: scale(0.92); }
 
-.title-bar .tb-restore-icon { position: relative; display: inline-flex; width: 12px; height: 12px; }
-.title-bar .tb-restore-back { position: absolute; bottom: 0; right: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: transparent; }
-.title-bar .tb-restore-front { position: absolute; top: 0; left: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: var(--bg); }
+.tb-restore-icon { position: relative; display: inline-flex; width: 12px; height: 12px; }
+.tb-restore-back { position: absolute; bottom: 0; right: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: transparent; }
+.tb-restore-front { position: absolute; top: 0; left: 0; width: 8px; height: 8px; border: 1.5px solid currentColor; background: var(--bg); }
 
 /* =============================
    MODALS / FOLDER PICKER / SETTINGS
