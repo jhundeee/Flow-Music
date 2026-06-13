@@ -494,6 +494,10 @@ function App() {
 
   const { filteredSongs, artists, albums, folderCards } = useLibraryIndexes(songs, filter, drillFilter);
 
+  const song = currentTrack && songIndexById.has(currentTrack.id)
+    ? songs[songIndexById.get(currentTrack.id)]
+    : null;
+
   const togglePlay = useCallback(() => {
     if (!songs.length) return;
     if (!currentTrack) {
@@ -652,7 +656,7 @@ function App() {
 
   // Expose playback state to system media controls (Windows taskbar widget etc.)
   const mediaCtxRef = useRef(null);
-  mediaCtxRef.current = { currentTrack, song, songs, isPlaying, audioRef, togglePlay, handlePrevious, handleNext, handleSeekForward, handleSeekBackward, setIsPlaying };
+  mediaCtxRef.current = { currentTrack, songs, isPlaying, audioRef, togglePlay, handlePrevious, handleNext, handleSeekForward, handleSeekBackward, setIsPlaying };
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
     const ctx = () => mediaCtxRef.current;
@@ -818,10 +822,6 @@ const handleJumpToCurrent = useCallback(() => {
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
   }, [togglePlay]);
-
-  const song = currentTrack && songIndexById.has(currentTrack.id)
-    ? songs[songIndexById.get(currentTrack.id)]
-    : null;
 
   useEffect(() => {
     let cancelled = false;
