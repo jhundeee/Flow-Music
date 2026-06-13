@@ -13,8 +13,7 @@ import Panorama from './components/Panorama';
 import { SECTION_ORDER } from './components/Panorama';
 import { useToast } from './components/Toast';
 import { useLibraryIndexes } from './hooks/useLibraryIndexes';
-import { normPath, isUnderFolder, filterSongsForFolders, collectLibraryRoots, parentDir } from './utils/paths';
-import { normalizeSongs } from './utils/songId';
+import { normPath, isUnderFolder, parentDir } from './utils/paths';
 import TitleBar from './components/TitleBar';
 import { usePlayback } from './hooks/usePlayback';
 
@@ -40,8 +39,6 @@ function dedupePaths(paths) {
   });
 }
 
-const STORAGE_KEY = 'splayer_library';
-const FOLDERS_KEY = 'splayer_folders';
 const VOLUME_KEY = 'splayer_volume';
 const SESSION_KEY = 'splayer_session';
 const APP_THEME_COLOR = '#6c5ce7';
@@ -237,109 +234,32 @@ function App() {
     saveVolume(val);
   }, [audioRef, saveVolume]);
 
-  const loadLibrary = useCallback(async () => {
-    let folders = [];
-    let saved = [];
-    try { folders = JSON.parse(localStorage.getItem(FOLDERS_KEY) || '[]'); } catch {}
-    try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch {}
-    if (!Array.isArray(folders)) folders = [];
-    if (!Array.isArray(saved)) saved = [];
-    const snakeToCamel = (obj) => {
-      const map = { file_path: 'filePath', relative_path: 'relativePath', album_artist: 'albumArtist', track_no: 'trackNo', is_favorite: 'isFavorite', lyrics_source: 'lyricsSource', lyrics_unsynced: 'lyricsUnsynced', lyrics_lrc: 'lyricsLrc', lyrics_lrc_meta: 'lyricsLrcMeta', file_name: 'fileName' };
-      for (const [snake, camel] of Object.entries(map)) {
-        if (snake in obj && !(camel in obj)) { obj[camel] = obj[snake]; delete obj[snake]; }
-      }
-      if ('lyricsLRC' in obj && !('lyricsLrc' in obj)) obj.lyricsLrc = obj.lyricsLRC;
-      return obj;
-    };
-    saved = saved.map(snakeToCamel);
-    const isRealPath = (p) => p && !p.startsWith('http://') && !p.startsWith('https://') && !p.includes('localhost');
-    folders = folders.filter(isRealPath);
-    saved = saved.filter((s) => isRealPath(s.filePath));
-    folders = dedupePaths(folders);
-    const rootsFromSongs = dedupePaths(collectLibraryRoots(saved));
-    if (folders.length === 0 && rootsFromSongs.length > 0) {
-      folders = rootsFromSongs;
-    }
-    let prunedSongs = normalizeSongs(filterSongsForFolders(saved, folders));
-    if (prunedSongs.length === 0 && saved.length > 0 && rootsFromSongs.length > 0) {
-      folders = dedupePaths([...folders, ...rootsFromSongs]);
-      prunedSongs = normalizeSongs(filterSongsForFolders(saved, folders));
-    }
-    prunedSongs = prunedSongs.map((s) => {
-      if (s.libraryRoot) return s;
-      const root = folders.find((fp) => isUnderFolder(s.filePath, fp));
-      return root ? { ...s, libraryRoot: root } : s;
-    });
-    const invalidFolders = new Set(['', 'unknown', 'unknown album', 'unknown artist', 'localhost', 'localhost:5173', 'localhost5173']);
-    prunedSongs = prunedSongs.map((s) => {
-      const folderStr = s.folder ? s.folder.trim().toLowerCase() : '';
-      if ((folderStr && !invalidFolders.has(folderStr)) || !s.filePath) return s;
-      for (const fp of folders) {
-        const normFile = s.filePath.replace(/\\/g, '/').toLowerCase();
-        const normFolder = fp.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
-        if (normFile.startsWith(normFolder + '/')) {
-          const rel = normFile.slice(normFolder.length + 1);
-          const parts = rel.split('/');
-          const dir = parts.length > 1 ? parts[0] : normFolder.split('/').pop() || 'Unknown';
-          return { ...s, folder: dir };
-        }
-      }
-      const normal = s.filePath.replace(/\\/g, '/');
-      const parts = normal.split('/');
-      if (parts.length >= 2) {
-        const candidate = parts[parts.length - 2];
-        if (!candidate.includes(':')) return { ...s, folder: candidate };
-      }
-      return s;
-    });
-    setFolderPaths(folders);
-    setSongs(prunedSongs);
-    folderPathsRef.current = folders;
-    songsRef.current = prunedSongs;
-    loadedRef.current = true;
-
-    try {
-      const storedFolders = localStorage.getItem(FOLDERS_KEY) || '[]';
-      const storedSongs = localStorage.getItem(STORAGE_KEY) || '[]';
-      if (storedFolders !== JSON.stringify(folders) || storedSongs !== JSON.stringify(prunedSongs)) {
-        localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(prunedSongs));
-      }
-    } catch {}
-  }, []);
-
   const loadedRef = useRef(false);
-
-  const saveLibrary = useCallback((updatedSongs, updatedFolders) => {
-    if (updatedSongs !== undefined) {
-      songsRef.current = updatedSongs;
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSongs)); } catch {}
-    }
-    if (updatedFolders !== undefined) {
-      folderPathsRef.current = updatedFolders;
-      try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(updatedFolders)); } catch {}
-    }
-  }, []);
-
-  const persistLibrary = useCallback(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(songsRef.current));
-      localStorage.setItem(FOLDERS_KEY, JSON.stringify(folderPathsRef.current));
-    } catch {}
-  }, []);
   const folderPathsRef = useRef(folderPaths);
   const songsRef = useRef(songs);
-  const saveTimerRef = useRef(null);
   folderPathsRef.current = folderPaths;
   songsRef.current = songs;
 
-  useEffect(() => {
-    if (!loadedRef.current) return;
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(persistLibrary, 500);
-    return () => clearTimeout(saveTimerRef.current);
-  }, [songs, folderPaths, persistLibrary]);
+  const loadLibrary = useCallback(async () => {
+    if (!isTauri) {
+      loadedRef.current = true;
+      return;
+    }
+    try {
+      const [tracks, folders] = await Promise.all([
+        invoke('db_get_tracks'),
+        invoke('db_get_folders'),
+      ]);
+      const folderPathsArr = (folders || []).map((f) => f.path);
+      setSongs(tracks || []);
+      setFolderPaths(folderPathsArr);
+      songsRef.current = tracks || [];
+      folderPathsRef.current = folderPathsArr;
+    } catch (err) {
+      console.error('loadLibrary failed:', err);
+    }
+    loadedRef.current = true;
+  }, []);
 
   const tagSongsWithRoot = useCallback((scanned, rootPath) => {
     if (!rootPath) return scanned;
@@ -357,69 +277,57 @@ function App() {
       const folderName = folderPath.split(/[\\/]/).pop() || folderPath;
       if (result === 'error') {
         addToast(`Failed to scan "${folderName}". Check folder permissions.`, 'error');
-        scanResultRef.current = '';
         setScanState((prev) => ({ ...prev, visible: false }));
         return;
       }
       if (result === 'no-audio') {
         addToast(`No audio files found in "${folderName}".`, 'info');
-        scanResultRef.current = '';
         setScanState((prev) => ({ ...prev, visible: false }));
         return;
       }
-      const scannedTagged = tagSongsWithRoot(scanned, folderPath);
-      const prevFolders = dedupePaths(folderPathsRef.current);
-      const prevSongs = songsRef.current;
-      const existingIds = new Set(prevSongs.map((s) => s.id));
-      const newSongs = scannedTagged.filter((s) => !existingIds.has(s.id));
+      const scannedWithRoot = tagSongsWithRoot(scanned, folderPath);
+      const existingIds = new Set(songsRef.current.map((s) => s.id));
+      const newSongs = scannedWithRoot.filter((s) => !existingIds.has(s.id));
       const fp = normPath(folderPath);
+      const alreadyInFolders = folderPathsRef.current.some((p) => normPath(p) === fp);
+      const newFolders = alreadyInFolders ? folderPathsRef.current : dedupePaths([...folderPathsRef.current, folderPath]);
+      const updated = newSongs.length > 0 ? [...songsRef.current, ...newSongs] : songsRef.current;
+      folderPathsRef.current = newFolders;
+      songsRef.current = updated;
+      setSongs(updated);
+      setFolderPaths(newFolders);
       if (newSongs.length > 0) {
-        const newFolders = dedupePaths([...prevFolders, folderPath]);
-        const updated = [...prevSongs, ...newSongs];
-        folderPathsRef.current = newFolders;
-        songsRef.current = updated;
-        setFolderPaths(newFolders);
-        setSongs(updated);
-        saveLibrary(updated, newFolders);
         addToast(`${newSongs.length} song${newSongs.length !== 1 ? 's' : ''} added from ${folderName}`, 'success');
+      } else if (!alreadyInFolders) {
+        addToast('All songs in this folder are already in your library.', 'info');
       } else {
-        const alreadyExists = prevFolders.some((p) => normPath(p) === fp);
-        if (!alreadyExists) {
-          addToast('All songs in this folder are already in your library.', 'info');
-          const newFolders = dedupePaths([...prevFolders, folderPath]);
-          folderPathsRef.current = newFolders;
-          setFolderPaths(newFolders);
-          saveLibrary(prevSongs, newFolders);
-        } else {
-          addToast('This folder is already in your library.', 'info');
-        }
+        addToast('This folder is already in your library.', 'info');
       }
     } catch (err) {
       addToast(`Failed to scan folder: ${err.message}`, 'error');
     }
     scanResultRef.current = '';
     setScanState((prev) => ({ ...prev, visible: false }));
-  }, [addToast, saveLibrary, tagSongsWithRoot]);
+  }, [addToast, tagSongsWithRoot]);
 
   const handleScanFiles = useCallback(async (files) => {
     if (!files || files.length === 0) return;
     try {
       const scanned = await invoke('scan_files', { files });
-      const scannedTagged = scanned.map((s) => ({
+      const scannedWithRoot = scanned.map((s) => ({
         ...s,
         libraryRoot: parentDir(s.filePath),
       }));
-      const existingIds = new Set(songs.map((s) => s.id));
-      const newSongs = scannedTagged.filter((s) => !existingIds.has(s.id));
+      const existingIds = new Set(songsRef.current.map((s) => s.id));
+      const newSongs = scannedWithRoot.filter((s) => !existingIds.has(s.id));
       if (newSongs.length > 0) {
         const parentDirs = dedupePaths(newSongs.map((s) => s.libraryRoot).filter(Boolean));
-        const newFolders = dedupePaths([...folderPaths, ...parentDirs]);
-        const updated = [...songs, ...newSongs];
-        folderPathsRef.current = newFolders;
+        const newFolders = dedupePaths([...folderPathsRef.current, ...parentDirs]);
+        const updated = [...songsRef.current, ...newSongs];
         songsRef.current = updated;
+        folderPathsRef.current = newFolders;
         setSongs(updated);
         setFolderPaths(newFolders);
-        saveLibrary(updated, newFolders);
         addToast(`${newSongs.length} file${newSongs.length !== 1 ? 's' : ''} added to library.`, 'success');
       } else {
         addToast('Selected files are already in your library.', 'info');
@@ -427,7 +335,7 @@ function App() {
     } catch (err) {
       addToast(`Failed to scan files: ${err.message}`, 'error');
     }
-  }, [songs, folderPaths, addToast, saveLibrary]);
+  }, [addToast]);
 
   const selectFolder = useCallback(() => {
     (async () => {
@@ -446,7 +354,6 @@ function App() {
     const updated = songs.filter((s) => s.folder !== folderName);
     setSongs(updated);
     songsRef.current = updated;
-    saveLibrary(updated);
     if (removedCurrent) {
       setIsPlaying(false);
       audioRef.current?.pause();
@@ -454,25 +361,25 @@ function App() {
       playTrackNow(null, []);
     }
     addToast(`Removed "${folderName}" from library.`, 'success');
-  }, [songs, currentTrack, audioRef, saveLibrary, playTrackNow, addToast]);
+  }, [songs, currentTrack, audioRef, playTrackNow, addToast]);
 
   const removeFolder = useCallback((folderPath) => {
     if (!folderPath) return;
-    const newFolders = dedupePaths(folderPaths.filter((fp) => normPath(fp) !== normPath(folderPath)));
+    const newFolders = dedupePaths(folderPathsRef.current.filter((fp) => normPath(fp) !== normPath(folderPath)));
     const removedCurrent = currentTrack?.filePath && isUnderFolder(currentTrack.filePath, folderPath);
-    const updated = songs.filter((s) => !isUnderFolder(s.filePath, folderPath));
+    const updated = songsRef.current.filter((s) => !isUnderFolder(s.filePath, folderPath));
     setFolderPaths(newFolders);
     setSongs(updated);
     songsRef.current = updated;
     folderPathsRef.current = newFolders;
-    saveLibrary(updated, newFolders);
+    if (isTauri) invoke('db_remove_folder', { folderPath }).catch(() => {});
     if (removedCurrent) {
       setIsPlaying(false);
       audioRef.current?.pause();
       audioRef.current?.removeAttribute('src');
       playTrackNow(null, []);
     }
-  }, [folderPaths, songs, currentTrack, saveLibrary, audioRef, playTrackNow]);
+  }, [currentTrack, audioRef, playTrackNow]);
 
   const loadLyricsForCurrent = useCallback((song) => {
     let lines = [];
@@ -609,7 +516,10 @@ function App() {
   const handleToggleFavorite = useCallback((masterIdx) => {
     setSongs(prev => {
       const u = [...prev];
-      u[masterIdx] = { ...u[masterIdx], isFavorite: !u[masterIdx].isFavorite };
+      const track = u[masterIdx];
+      const newFav = !track.isFavorite;
+      u[masterIdx] = { ...track, isFavorite: newFav };
+      if (isTauri) invoke('db_set_favorite', { trackId: track.id, favorite: newFav }).catch(() => {});
       return u;
     });
   }, []);
@@ -771,8 +681,18 @@ const handleJumpToCurrent = useCallback(() => {
 
   useEffect(() => {
     const flush = () => {
-      clearTimeout(saveTimerRef.current);
-      persistLibrary();
+      clearTimeout(sessionSaveTimerRef.current);
+      try {
+        const snapshot = getSessionSnapshot();
+        localStorage.setItem(SESSION_KEY, JSON.stringify({
+          ...snapshot,
+          currentTime: currentTimeRef.current,
+          isPlaying: false,
+          volume,
+          filter,
+          drillFilter,
+        }));
+      } catch {}
     };
     window.addEventListener('beforeunload', flush);
     let unlistenClose;
@@ -785,7 +705,7 @@ const handleJumpToCurrent = useCallback(() => {
       window.removeEventListener('beforeunload', flush);
       unlistenClose?.();
     };
-  }, [persistLibrary]);
+  }, [getSessionSnapshot, volume, filter, drillFilter]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -814,8 +734,39 @@ const handleJumpToCurrent = useCallback(() => {
   }, [addToast]);
 
   useEffect(() => {
+    if (!isTauri) return;
+    let unsub;
+    (async () => {
+      unsub = await listen('fs-track-changed', (event) => {
+        const data = event.payload;
+        if (data.type === 'deleted' && data.path) {
+          setSongs(prev => prev.map(s => s.filePath === data.path ? { ...s, isAvailable: false } : s));
+        } else if (data.type === 'created' && data.track) {
+          setSongs(prev => {
+            if (prev.some(s => s.id === data.track.id)) return prev;
+            return [...prev, data.track];
+          });
+        }
+      });
+    })();
+    return () => { if (unsub) unsub(); };
+  }, []);
+
+  const historyLoggedRef = useRef(null);
+
+  useEffect(() => {
+    if (!song || !song.id || !duration || duration <= 0) { historyLoggedRef.current = null; return; }
+    const threshold = Math.min(duration * 0.5, 30);
+    if (currentTime >= threshold && historyLoggedRef.current !== song.id) {
+      historyLoggedRef.current = song.id;
+      if (isTauri) invoke('db_log_play', { trackId: song.id }).catch(() => {});
+    }
+  }, [currentTime, duration, song]);
+
+  useEffect(() => {
     loadVolume();
     loadLibrary();
+    if (isTauri) invoke('db_check_availability').catch(() => {});
   }, []);
 
   const sessionRestoredRef = useRef(false);
@@ -841,16 +792,19 @@ const handleJumpToCurrent = useCallback(() => {
     clearTimeout(sessionSaveTimerRef.current);
     sessionSaveTimerRef.current = setTimeout(() => {
       try {
-        const existing = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}');
-        existing.currentTime = currentTime;
-        existing.isPlaying = isPlaying;
-        existing.filter = filter;
-        existing.drillFilter = drillFilter;
-        localStorage.setItem(SESSION_KEY, JSON.stringify(existing));
+        const snapshot = getSessionSnapshot();
+        localStorage.setItem(SESSION_KEY, JSON.stringify({
+          ...snapshot,
+          currentTime,
+          isPlaying,
+          volume,
+          filter,
+          drillFilter,
+        }));
       } catch {}
     }, 2000);
     return () => clearTimeout(sessionSaveTimerRef.current);
-  }, [currentTime, isPlaying, filter, drillFilter]);
+  }, [currentTime, isPlaying, volume, filter, drillFilter, getSessionSnapshot]);
 
   useEffect(() => {
     const handleKey = (e) => {

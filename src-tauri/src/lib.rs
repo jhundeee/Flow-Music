@@ -1,13 +1,16 @@
 #![allow(unused_imports)]
 use base64::Engine;
 use lofty::prelude::*;
-use lofty::{read_from_path};
-use serde::{Serialize};
+use lofty::read_from_path;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use walkdir::WalkDir;
+
+mod db;
+mod watcher;
 
 // ─── Types ───
 
@@ -32,15 +35,16 @@ struct SongData {
     lyrics_source: Option<String>,
     lyrics_lrc: Option<Vec<LyricLine>>,
     lyrics_lrc_meta: Option<LrcMeta>,
+    library_root: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct LyricLine {
     time: f64,
     text: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct LrcMeta {
     ti: Option<String>,
     ar: Option<String>,
@@ -68,6 +72,11 @@ struct AudioFileResult {
 }
 
 // ─── State ───
+
+struct AppState {
+    db: Mutex<rusqlite::Connection>,
+    watcher: Mutex<watcher::LibraryWatcher>,
+}
 
 struct ScanCancellers {
     map: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
@@ -141,7 +150,6 @@ fn parse_lrc(text: &str) -> (Vec<LyricLine>, Option<LrcMeta>) {
             continue;
         }
 
-        // Metadata lines
         if let Some(caps) = meta_re.captures(trimmed) {
             let full_tag = caps.get(0).unwrap().as_str();
             let tag = full_tag[1..full_tag.find(':').unwrap_or(0)].to_lowercase();
@@ -159,7 +167,6 @@ fn parse_lrc(text: &str) -> (Vec<LyricLine>, Option<LrcMeta>) {
             continue;
         }
 
-        // Time tags
         let mut times = Vec::new();
         let mut last_end = 0;
 
@@ -220,7 +227,6 @@ fn parse_filename(name: &str) -> (String, Option<String>) {
     (name_clean.to_string(), None)
 }
 
-// Bounded rfind for a str pattern (simple helper)
 trait StrFind {
     fn rstrfind(&self, pat: &str) -> Option<usize>;
 }
@@ -303,13 +309,24 @@ fn read_image_as_data_url(path: &Path) -> Option<String> {
     Some(format!("data:{};base64,{}", mime, b64))
 }
 
+fn find_library_root(conn: &rusqlite::Connection, file_path: &str) -> Option<String> {
+    let folders = db::get_folders(conn).ok()?;
+    let norm = norm_path(file_path);
+    for f in &folders {
+        let f_norm = norm_path(&f.path);
+        if norm.starts_with(&format!("{}/", f_norm)) || norm == f_norm {
+            return Some(f.path.clone());
+        }
+    }
+    None
+}
+
 fn parse_song(full_path: &str, folder_path: &str) -> SongData {
     let path = Path::new(full_path);
     let _ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let base = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
     let dir = path.parent().unwrap_or(Path::new("."));
 
-    // Attempt metadata parsing with lofty
     let (name, artist, album, album_artist, track_no, duration, cover, lyrics_synced, lyrics_unsynced) =
         match read_from_path(full_path) {
             Ok(tagged_file) => {
@@ -348,7 +365,6 @@ fn parse_song(full_path: &str, folder_path: &str) -> SongData {
                         })
                     });
 
-                    // Try to extract lyrics via item iteration
                     let mut unsynced = None;
                     for tag in all_tags {
                         for item in tag.items() {
@@ -395,7 +411,6 @@ fn parse_song(full_path: &str, folder_path: &str) -> SongData {
     let cover_fallback = cover.or_else(|| find_cover_recursive(dir));
     let folder = dir.file_name().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string();
 
-    // External LRC file
     let lrc_path = dir.join(format!("{}.lrc", base));
     let (lyrics_lrc, lyrics_lrc_meta) = if lrc_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&lrc_path) {
@@ -444,6 +459,7 @@ fn parse_song(full_path: &str, folder_path: &str) -> SongData {
         lyrics_source,
         lyrics_lrc,
         lyrics_lrc_meta,
+        library_root: None,
     }
 }
 
@@ -507,7 +523,6 @@ async fn open_folder(path: String) -> Result<(), String> {
 #[tauri::command]
 async fn get_cover(path: String) -> Result<Option<String>, String> {
     let path = Path::new(&path);
-    // Try embedded cover first
     if let Ok(tagged_file) = read_from_path(&path) {
         if let Some(tag) = tagged_file.tags().first() {
             if let Some(pic) = tag.pictures().first() {
@@ -517,35 +532,111 @@ async fn get_cover(path: String) -> Result<Option<String>, String> {
             }
         }
     }
-    // Fallback: folder cover
     let dir = path.parent().unwrap_or(path);
     Ok(find_cover_recursive(dir))
 }
 
+// ─── DB Commands ───
+
 #[tauri::command]
-async fn scan_files(files: Vec<String>, app: AppHandle) -> Result<Vec<SongData>, String> {
-    let folder_path = "individual_files";
-    let songs: Vec<SongData> = files
-        .into_iter()
-        .map(|fp| {
-            let song = parse_song(&fp, folder_path);
-            song
-        })
-        .collect();
-    let _ = app.emit(
-        "scan-progress",
-        ScanProgress {
-            type_: "complete".to_string(),
-            count: Some(songs.len()),
-            current: None,
-            total: None,
-            folder: None,
-            file_name: None,
-            message: None,
-        },
-    );
-    Ok(songs)
+fn db_get_tracks(state: State<'_, AppState>) -> Result<Vec<SongData>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let rows = db::get_all_tracks(&conn)?;
+    Ok(rows.into_iter().map(|r| SongData {
+        id: r.id,
+        name: r.name,
+        artist: r.artist,
+        album: r.album,
+        album_artist: r.album_artist,
+        folder: r.folder,
+        relative_path: r.relative_path,
+        file_path: r.path,
+        cover: r.cover,
+        duration: r.duration,
+        size: r.size,
+        track_no: r.track_no,
+        is_favorite: r.is_favorite,
+        lyrics: None,
+        lyrics_unsynced: r.lyrics_unsynced,
+        lyrics_source: r.lyrics_source,
+        lyrics_lrc: r.lyrics_lrc.and_then(|j| serde_json::from_str(&j).ok()),
+        lyrics_lrc_meta: r.lyrics_lrc_meta.and_then(|j| serde_json::from_str(&j).ok()),
+        library_root: r.library_root,
+    }).collect())
 }
+
+#[tauri::command]
+fn db_get_folders(state: State<'_, AppState>) -> Result<Vec<db::FolderRow>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::get_folders(&conn)
+}
+
+#[tauri::command]
+fn db_add_folder(folder_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::add_folder(&conn, &folder_path)
+}
+
+#[tauri::command]
+fn db_remove_folder(folder_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::remove_folder(&conn, &folder_path)
+}
+
+#[tauri::command]
+fn db_set_favorite(track_id: String, favorite: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE tracks SET is_favorite = ?1 WHERE id = ?2",
+        rusqlite::params![favorite as i32, track_id],
+    ).map_err(|e| format!("Failed to set favorite: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn db_log_play(track_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::log_play(&conn, &track_id)
+}
+
+#[tauri::command]
+fn db_get_history(limit: usize, state: State<'_, AppState>) -> Result<Vec<db::HistoryRow>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::get_recent_history(&conn, limit)
+}
+
+#[tauri::command]
+fn db_delete_track(file_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::delete_track(&conn, &file_path)
+}
+
+#[tauri::command]
+fn db_check_availability(state: State<'_, AppState>) -> Result<usize, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let folders = db::get_folders(&conn)?;
+    let mut all_paths = Vec::new();
+    for f in &folders {
+        let fp = Path::new(&f.path);
+        if !fp.exists() { continue; }
+        let walker = WalkDir::new(fp).follow_links(false);
+        for entry in walker {
+            if let Ok(e) = entry {
+                if e.file_type().is_file() {
+                    if let Some(ext) = e.path().extension() {
+                        let ext_str = format!(".{}", ext.to_string_lossy().to_lowercase());
+                        if AUDIO_EXTS.contains(&ext_str.as_str()) {
+                            all_paths.push(e.path().to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    db::bulk_set_availability(&conn, &all_paths)
+}
+
+// ─── Scan Commands ───
 
 #[tauri::command]
 async fn cancel_scan(folder_path: String, state: State<'_, ScanCancellers>) -> Result<(), String> {
@@ -561,11 +652,12 @@ async fn scan_folder(
     app: AppHandle,
     folder_path: String,
     recursive: bool,
-    state: State<'_, ScanCancellers>,
+    canceller_state: State<'_, ScanCancellers>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<SongData>, String> {
     let cancel_flag = std::sync::Arc::new(AtomicBool::new(false));
     {
-        let mut map = state.map.lock().map_err(|e| e.to_string())?;
+        let mut map = canceller_state.map.lock().map_err(|e| e.to_string())?;
         map.insert(norm_path(&folder_path), cancel_flag.clone());
     }
 
@@ -605,7 +697,7 @@ async fn scan_folder(
     );
 
     if total == 0 {
-        let mut map = state.map.lock().map_err(|e| e.to_string())?;
+        let mut map = canceller_state.map.lock().map_err(|e| e.to_string())?;
         map.remove(&norm_path(&folder_path));
         let _ = app.emit(
             "scan-progress",
@@ -652,8 +744,20 @@ async fn scan_folder(
 
     let was_cancelled = cancel_flag.load(Ordering::SeqCst);
     {
-        let mut map = state.map.lock().map_err(|e| e.to_string())?;
+        let mut map = canceller_state.map.lock().map_err(|e| e.to_string())?;
         map.remove(&norm_path(&folder_path));
+    }
+
+    // Persist to DB
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::add_folder(&conn, &folder_path)?;
+        for song in &songs {
+            let mut s = song.clone();
+            s.library_root = Some(folder_path.clone());
+            db::upsert_track(&conn, &s)?;
+        }
+        db::update_folder_scanned(&conn, &folder_path)?;
     }
 
     if was_cancelled {
@@ -687,16 +791,76 @@ async fn scan_folder(
     Ok(songs)
 }
 
+#[tauri::command]
+async fn scan_files(files: Vec<String>, app: AppHandle, state: State<'_, AppState>) -> Result<Vec<SongData>, String> {
+    let folder_path = "individual_files";
+    let songs: Vec<SongData> = files
+        .into_iter()
+        .map(|fp| parse_song(&fp, folder_path))
+        .collect();
+
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        for song in &songs {
+            let mut s = song.clone();
+            s.library_root = find_library_root(&conn, &s.file_path);
+            db::upsert_track(&conn, &s)?;
+        }
+    }
+
+    let _ = app.emit(
+        "scan-progress",
+        ScanProgress {
+            type_: "complete".to_string(),
+            count: Some(songs.len()),
+            current: None,
+            total: None,
+            folder: None,
+            file_name: None,
+            message: None,
+        },
+    );
+    Ok(songs)
+}
+
 use regex;
 
 pub fn run() {
     let _ = env_logger::try_init();
-    println!("Tauri::run starting...");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(ScanCancellers::new())
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            let app_dir = app.path().app_data_dir().expect("failed to resolve app data dir");
+            std::fs::create_dir_all(&app_dir).ok();
+            let db_path = app_dir.join("flow_music.db");
+            let db_path_str = db_path.to_string_lossy().to_string();
+
+            let conn = db::init_db(&db_path_str).expect("failed to init database");
+            let _ = db::check_availability_initial(&conn);
+
+            let folders = db::get_folders(&conn).unwrap_or_default();
+            let folder_paths: Vec<String> = folders.into_iter().map(|f| f.path).collect();
+
+            let mut watcher = watcher::LibraryWatcher::new();
+            if !folder_paths.is_empty() {
+                let _ = watcher.start(&folder_paths, app_handle.clone(), db_path_str);
+            }
+
+            app.manage(AppState {
+                db: Mutex::new(conn),
+                watcher: Mutex::new(watcher),
+            });
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             window_minimize,
             window_maximize,
@@ -708,13 +872,16 @@ pub fn run() {
             cancel_scan,
             scan_folder,
             scan_files,
+            db_get_tracks,
+            db_get_folders,
+            db_add_folder,
+            db_remove_folder,
+            db_set_favorite,
+            db_log_play,
+            db_get_history,
+            db_delete_track,
+            db_check_availability,
         ])
-        .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-            }
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
